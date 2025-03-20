@@ -6,11 +6,14 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.strategies.ddp import DDPStrategy
-from pytorch_lightning.profiler import AdvancedProfiler
+from pytorch_lightning.profilers import AdvancedProfiler
+from pytorch_lightning import loggers as pl_loggers
 from utils.utils import getConfig
 from utils.progress_bar import getProgressBar
 import random
 import numpy as np
+import os
+os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
 random.seed(   getConfig()['random_seed'])
 np.random.seed(getConfig()['random_seed'])
@@ -37,18 +40,22 @@ def main(args):
     lr_monitor = LearningRateMonitor(**cfg['LearningRateMonitor'])
 
     # Strategy
-    strategy = DDPStrategy(**cfg['DDPStrategy'])
+    strategy = DDPStrategy(**cfg['DDPStrategy']) # changed from DataParallelStrategy due to deprecation
 
     # Profiler
     profiler = AdvancedProfiler(**cfg['AdvancedProfiler'])
 
+    # create custom logger to allow fig logging
+    tensorboard = pl_loggers.TensorBoardLogger('./')
+
     # PyTorch Lightning Train
     trainer = pl.Trainer(
         **cfg['Trainer'],
-        strategy=strategy,
+        # strategy=strategy,
         profiler=profiler,
-        callbacks=[ckpt_callback,lr_monitor,getProgressBar(cfg)]
-        )
+        callbacks=[ckpt_callback,lr_monitor],
+        logger = tensorboard
+    )
 
     trainer.fit(
         model      = model,

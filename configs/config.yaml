@@ -1,19 +1,36 @@
-datasets_path: ~/Datasets
+datasets_path: ./Datasets
 random_seed: 230
 
+data_in_ram: False
+
 stft_format: realimag # realimag or magphase
+stft_format_sp: magphase
 rir_duration: 32767
-nfft: 32767
-nhop: 4096
+nfft: 16383
+nhop: 2048
 nfrms: 16
+min_early_reverb: 0.004 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+echo_encode: True
+
+Encoding: # echo encoding params
+  delays: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149] 
+  amplitude: 0.6
+  win_size: 2048
+  kernel: "bp"
+  decoding: "autocepstrum" # options: "autocepstrum", "cepstrum"
 
 Model:
-  model_name: SpeechDAREUnet_v2
-  learning_rate: 0.01
+  model_name: EchoSpeechDAREUnet
+  learning_rate: 0.0001
+  nfft: 8192
+  nfrms: 16
+  use_transformer: True
+  use_speechbranch: True
+  alph: 0.5
 
 DataLoader:
   batch_size: 16
-  num_workers: 64
+  num_workers: 16
   persistent_workers: True
   shuffle: True
   drop_last: True
@@ -36,21 +53,28 @@ AdvancedProfiler:
   line_count_restriction: 1.0
 
 Trainer:
-  limit_train_batches: 10000
-  limit_val_batches: 50
-  limit_test_batches: 500
+  limit_train_batches: 10 #2220 TODO: CHANGE BACK FOR REAL TRAINING
+  limit_val_batches: 3
+  limit_test_batches: 111
   max_epochs: 100
+  # reload_dataloaders_every_n_epochs: 1
+  num_sanity_val_steps: 1
   accumulate_grad_batches: 1
-  log_every_n_steps: 10
+  log_every_n_steps: 100
+  check_val_every_n_epoch: 5
   accelerator: gpu
-  devices: 1
+  devices: [0]
 
-RichProgressBarTheme:
-  description: green_yellow
-  progress_bar: green1
-  progress_bar_finished: green1
-  progress_bar_pulse: '#6206E0'
-  batch_progress: green_yellow
-  time: grey82
-  processing_speed: grey82
-  metrics: grey82
+# RichProgressBar:
+#   refresh_rate: 100
+#   leave: True
+
+# RichProgressBarTheme:
+#   description: green_yellow
+#   progress_bar: green1
+#   progress_bar_finished: green1
+#   progress_bar_pulse: '#6206E0'
+#   batch_progress: green_yellow
+#   time: grey82
+#   processing_speed: grey82
+#   metrics: grey82

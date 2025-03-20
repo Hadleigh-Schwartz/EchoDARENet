@@ -11,7 +11,8 @@ import shutil
 
 class MitIrSurveyDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda', download=True):
-        self.root_dir = Path(os.path.expanduser(config['datasets_path']),'MIT_IR_Survey')
+        self.config = config
+        self.root_dir = Path(os.path.expanduser(self.config['datasets_path']),'MIT_IR_Survey')
         self.type = type
 
         if download and not os.path.isdir(str(self.root_dir)): # If the path doesn't exist, download the dataset if set to true
@@ -22,8 +23,9 @@ class MitIrSurveyDataset(Dataset):
 
         self.split_train_val_test_p = np.array(np.int16(split_train_val_test_p))
         self.split_train_val_test = np.int16(np.round( np.array(self.split_train_val_test_p)/100 * self.max_data_len ))
-        self.split_edge = np.cumsum(np.concatenate(([0],self.split_train_val_test_p)), axis=0)
+        self.split_edge = np.cumsum(np.concatenate(([0],self.split_train_val_test)), axis=0)
         self.idx_rand = np.random.RandomState(seed=config['random_seed']).permutation(self.max_data_len)
+
 
         split = []
         if self.type == "train":
@@ -35,7 +37,28 @@ class MitIrSurveyDataset(Dataset):
 
         files = glob.glob(str(Path(self.root_dir,"*")))
         self.split_filenames = [files[i] for i in split]
+    
+        # get excluded RIR filenames and remove them
+        exclude_filenames = self.get_exclude_rirs()
+        self.split_filenames = [f for f in self.split_filenames if f not in exclude_filenames]
+   
         self.device = device
+
+    def get_exclude_rirs(self):
+        """
+        Get list of filenames of RIRs that are excluded from the dataset based on their early reverb time
+        """
+        min_early_reverb = self.config["min_early_reverb"]
+        exclude_rirs = []
+        # iterate through all RIRs 
+        for idx in range(len(self.split_filenames)):
+            filename = self.split_filenames[idx]
+            audio_data, samplerate = sf.read(filename)
+            max_rir_idx = np.argmax(audio_data)
+            max_rir_time = max_rir_idx / samplerate
+            if max_rir_time < min_early_reverb:
+                exclude_rirs.append(filename)
+        return exclude_rirs
 
     def __len__(self):
         return len(self.split_filenames)
@@ -46,7 +69,7 @@ class MitIrSurveyDataset(Dataset):
         if samplerate != self.samplerate:
             raise Exception("The samplerate of the audio in the dataset is not 32kHz.")
         
-        return audio_data
+        return audio_data, filename
 
     def download_mit_ir_survey(self, local_path):
         url = "https://mcdermottlab.mit.edu/Reverb/IRMAudio/Audio.zip"
