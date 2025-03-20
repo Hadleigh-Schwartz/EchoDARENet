@@ -27,13 +27,6 @@ Model:
   use_transformer: True
   use_speechbranch: True
   alph: 0.5
-  model_name: SpeechDAREUnet_v2
-  learning_rate: 0.0001
-  nfft: 8192
-  nfrms: 16
-  use_transformer: True
-  use_speechbranch: True
-  alph: 0.5
 
 DataLoader:
   batch_size: 16
@@ -90,18 +83,3 @@ Trainer:
 #   time: grey82
 #   processing_speed: grey82
 #   metrics: grey82
-  devices: 1
-
-RichProgressBar:
-  refresh_rate: 1
-  leave: True
-
-RichProgressBarTheme:
-  description: green_yellow
-  progress_bar: green1
-  progress_bar_finished: green1
-  progress_bar_pulse: '#6206E0'
-  batch_progress: green_yellow
-  time: grey82
-  processing_speed: grey82
-  metrics: grey82
