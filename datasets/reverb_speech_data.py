@@ -7,6 +7,16 @@ from scipy import signal
 import numpy as np
 import torch as t
 import copy
+import os
+import sys
+import soundfile as sf
+import matplotlib.pyplot as plt
+
+# append echo encoding parent dir to path
+curr_dir = os.getcwd()
+echo_dir = curr_dir.split("EchoDARENet")[0] 
+sys.path.append(echo_dir)
+from traditional_echo_hiding import encode, decode
 
 class DareDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
@@ -14,14 +24,16 @@ class DareDataset(Dataset):
         self.type = type
         self.split_train_val_test_p = split_train_val_test_p
         self.device = device
-        
-        self.rir_dataset = MitIrSurveyDataset(config, type=self.type, device=device)
-        self.speech_dataset = LibriSpeechDataset(config, type=self.type)
-        
-        self.dataset_len = config['DataLoader']['batch_size'] * config['Trainer']["limit_"+type+"_batches"]
 
-        self.stft_format = config['stft_format']
-        self.stft_format_sp = config['stft_format_sp']
+        self.config = config
+        
+        self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
+        self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+        
+        self.dataset_len = self.config['DataLoader']['batch_size'] * self.config['Trainer']["limit_"+type+"_batches"]
+        
+        self.stft_format = self.config['stft_format']
+        self.stft_format_sp = self.config['stft_format_sp']
         self.eps = 10**-32
 
         self.nfft = self.config['nfft']
@@ -38,6 +50,13 @@ class DareDataset(Dataset):
         if self.data_in_ram:
             self.data = []
             self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
+        
+        if config["echo_encode"]:
+            np.random.seed(config['random_seed']) # for echo_encoding symbol generation
+            self.amplitude = config["Encoding"]["amplitude"]
+            self.delays = config["Encoding"]["delays"]
+            self.win_size = config["Encoding"]["win_size"]
+            self.kernel = config["Encoding"]["kernel"]
 
     def __len__(self):
         return self.dataset_len
@@ -48,6 +67,33 @@ class DareDataset(Dataset):
             idx_rir    = idx % len(self.rir_dataset)
 
             speech = self.speech_dataset[idx_speech][0].flatten()
+            speech = np.pad(
+                speech,
+                pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
+                )
+            speech = speech[:self.reverb_speech_duration]
+            if self.config["echo_encode"]:
+                num_wins = len(speech) // self.win_size
+                symbols = np.random.randint(0, len(self.delays), size = num_wins)
+                speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
+                speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
+     
+                # decode encoded speech to get baseline error rate
+                pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+                num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
+                num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
+                if self.config["Encoding"]["decoding"] == "autocepstrum":
+                    baseline_error_rate = num_errs_autocepstrum / len(pred_symbols_autocepstrum )
+                elif self.config["Encoding"]["decoding"] == "cepstrum":
+                    baseline_error_rate = num_errs / len(pred_symbols)
+                else:
+                    raise Exception("Unknown decoding method. Specify 'autocepstrum' or 'cepstrum'.")
+
+                # sanity check - save encoded speech
+                # sf.write(f'speech_samps/encoded/speech_{idx}.wav', speech, self.samplerate)
+            else:
+                symbols = 0
+                baseline_error_rate = 0
 
             rir,rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
@@ -63,29 +109,41 @@ class DareDataset(Dataset):
 
             rir = rir[25:]
             rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
-            rir = signal.sosfilt(self.rir_sos, rir)
+            rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
             maxI = np.argmax(np.abs(rir))
-            rir = rir / rir[maxI]
+            rir = rir / rir[maxI] # scaling
             rir = np.pad(
                 rir,
-                pad_width=(0, np.max((0,self.rir_duration - len(rir)))),
+                pad_width=(0, np.max((0,self.rir_duration - len(rir)))), # 0-padding at end has no effect on reverb results so is ok
                 )
-            rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI]))
+            rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
-            reverb_speech = signal.convolve(speech, rir, method='fft')
+            reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
+            
+            #  # sanity check. save the reverb speech and plot it
+            # sf.write(f'speech_samps/reverb/reverbed_{idx}.wav',reverb_speech, self.samplerate)
+            # plt.plot(speech, label = "orig", alpha = 0.5)
+            # plt.plot(reverb_speech, label = "reverb", alpha = 0.5)
+            # plt.legend()
+            # plt.savefig(f"speech_samps/plots/{idx}.png")
+            # plt.clf()
 
             reverb_speech = np.pad(
                 reverb_speech,
                 pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
                 )
             reverb_speech = reverb_speech[:self.reverb_speech_duration]
-            
-            speech = np.pad(
-                speech,
-                pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
-                )
-            speech = speech[:self.reverb_speech_duration]
 
+
+
+            # # sanity check. decode reverb speech
+            # reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
+            # rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+            # rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
+            # rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
+            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+
+        
             reverb_speech_stft = librosa.stft(
                 reverb_speech,
                 n_fft=self.nfft,
@@ -109,7 +167,6 @@ class DareDataset(Dataset):
                 reverb_speech = np.stack((np.real(reverb_speech_stft), np.imag(reverb_speech_stft)))
                 reverb_speech = reverb_speech - np.mean(reverb_speech)
                 reverb_speech = reverb_speech / np.max(np.abs(reverb_speech))
-
             else:
                 raise Exception("Unknown STFT format. Specify 'realimag' or 'magphase'.")
 
@@ -139,19 +196,18 @@ class DareDataset(Dataset):
 
             else:
                 raise Exception("Unknown STFT format. Specify 'realimag' or 'magphase'.")
-            
             rir_fft = np.fft.rfft(rir)
             rir_fft = np.stack((np.real(rir_fft), np.imag(rir_fft)))
             rir_fft = rir_fft - np.mean(rir_fft)
             rir_fft = rir_fft / np.max(np.abs(rir_fft))
 
             if self.data_in_ram:
-                self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn))
+                self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_error_rate))
                 self.idx_to_data[idx] = len(self.data) - 1
         else:
-            reverb_speech, speech, speech_wav, rir_fft, rir, rirfn = self.data[self.idx_to_data[idx]]
-        
-        return reverb_speech, speech, speech_wav, rir_fft[:,:,None], rir, rirfn
+            reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_error_rate = self.data[self.idx_to_data[idx]]
+        # trim speech_wav by one sample to match the inverse STFT output in the model 
+        return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, baseline_error_rate 
 
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)

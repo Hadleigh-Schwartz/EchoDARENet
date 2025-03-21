@@ -72,14 +72,15 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss_type = "train"
         # training_step defines the train loop.
         # it is independent of forward
-        x, ys, _, y, yt, _ , symbols, baseline_error_rate = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, _ , symbols, baseline_error_rate = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        
         x = x.float()
         y = y.float()
         y_hat, ys_hat = self.predict(x.float())
 
-        loss = self.compute_losses(y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
+        loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
         if self.use_speechbranch: # the clean speech prediction branch
-            loss2 = self.compute_losses(ys, None, ys_hat, loss_type)[self.loss_ind]
+            loss2 = self.compute_losses(batch_idx, ys, None, ys_hat, loss_type)[self.loss_ind]
             loss = (1-self.alph) * loss + self.alph * loss2
         # self.log_dict("loss", {loss_type: loss })
         self.log(loss_type+"_loss", loss )
@@ -89,14 +90,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss_type = "val"
         # validation_step defines the validation loop.
         # it is independent of forward
-        x, ys, _, y, yt, ytfn, symbols, baseline_error_rate = batch # reverberant speech, clean speech, waveform speech, RIR fft, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, ytfn, symbols, baseline_error_rate = batch # reverberant speech, clean speech, waveform speech, RIR fft, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         x = x.float()
         y = y.float()
         y_hat, ys_hat = self.predict(x.float())
         
-        losses = self.compute_losses(y, yt, y_hat, loss_type)
+        losses = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)
         if self.use_speechbranch:
-            losses2 = self.compute_losses(ys, None, ys_hat, loss_type)
+            losses2 = self.compute_losses(batch_idx, ys, None, ys_hat, loss_type)
             loss = (1-self.alph) * losses[self.loss_ind] + self.alph * losses2[self.loss_ind]
         else:
             loss = losses[self.loss_ind]
@@ -113,14 +114,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss_type = "test"
         # test_step defines the test loop.
         # it is independent of forward
-        x, ys, _, y, yt, _, symbols, baseline_error_rate = batch # reverberant speech, clean speech, waveform speech, RIR fft, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, _, symbols, baseline_error_rate = batch # reverberant speech, clean speech, waveform speech, RIR fft, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         x = x.float()
         y = y.float()
         y_hat, ys_hat = self.predict(x.float())
 
-        loss = self.compute_losses(y, yt, y_hat, loss_type)[self.loss_ind]
+        loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind]
         if self.use_speechbranch:
-            loss2 = self.compute_losses(ys, None, ys_hat, loss_type)[self.loss_ind]
+            loss2 = self.compute_losses(batch_idx, ys, None, ys_hat, loss_type)[self.loss_ind] 
             loss = (1-self.alph) * loss + self.alph * loss2
         # self.log("loss", {loss_type: loss })
         self.log(loss_type+"_loss", loss )
@@ -153,22 +154,41 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         
         return out1Out, d4Out_2
     
-    def echo_encoding_loss(self):
+    def echo_encoding_loss(self, yt, symbols, baseline_error_rate):
         # have some notion of making this loss less important if the error is already low in the face of reverbs
-        # or already high without reverb (very rare, idk if this case is even worth addressing)
+        # or already high without reverb (very rare, idk if this case is even worth addressing
         pass
 
-    def compute_losses(self, y, yt, y_predict, type):
+    def compute_echo_losses(self, batch_idx, y, yt, y_predict, symbols, baseline_error_rate):
+        #    if symbols is not None and baseline_error_rate is not None:
+        #     # TODO: Reverse STFT rather than IRFFT, because there is more than one frame in this case
+        #     # reverse predicted frequency-domain representation to time-domain
+        #     # print(f"Yt shape: {yt.shape[1]}. NFFT: }")
+        #     # print(f"Speech case. y shape: {y.shape}, yt shape: {yt.shape}, y_predict shape: {y_predict.shape}, y_c shape: {y_c.shape}, y_hat_c shape: {y_hat_c.shape}")
+        #     hop_length = (yt.shape[1] + 1) // (y_hat_c.shape[2])
+        #     y_hat_c_t = torch.istft(y_hat_c, n_fft=self.nfft, hop_length=hop_length, length = yt.shape[1], return_complex=False) 
+        #     # print(f"Hop length: {hop_length}, y_hat_c_t shape: {y_hat_c_t.shape} and type: {y_hat_c_t.dtype}. yt type: {yt.dtype}")
+        #     echo_loss = self.echo_encoding_loss(y_hat_c_t, symbols, baseline_error_rate)
+        #     if batch_idx % 20 == 0:
+        #         # print(y_c.shape, y_hat_c_t.shape, yt.shape, y_hat_c.shape)
+        #         self.make_pred_speech_plot(batch_idx, y_c, y_hat_c, yt, y_hat_c_t)
+        pass
+
+    def compute_losses(self, batch_idx, y, yt, y_predict, type):
         """
         Compute all loss functions potentially incorporated during training.
         Inputs can be of speech or RIR.
 
         Args:
-            y: ground-truth frequency-domain representation (RIR or speech)
-            yt: ground-truth time-domain representation (RIR or speech)
-            y_predict: predicted frequency-domain representation (RIR or speech)
-            type: train/val/test
-        
+            y: 
+                ground-truth frequency-domain representation (RIR or speech)
+            yt: 
+                ground-truth time-domain representation (RIR or speech)
+            y_predict:  
+                predicted frequency-domain representation (RIR or speech)
+            type: str 
+                "train", "val", or "test"
+            
         Returns:
             All of the computed losses
         """
@@ -185,8 +205,11 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         else:
             ls = ""
 
+    
         if yt is not None:
             y_hat_c_t = t.fft.irfft(y_hat_c,n=yt.shape[1],dim=1).squeeze() # reverse predicted frequency-domain representation to time-domain
+            # print(f"Non speech case. y shape: {y.shape}, yt shape: {yt.shape}, y_predict shape: {y_predict.shape}, y_c shape: {y_c.shape}, y_hat_c shape: {y_hat_c.shape}")
+            # print(f"y_hat_c_t shape: {y_hat_c_t.shape} and type: {y_hat_c_t.dtype}. yt type: {yt.dtype}")
             mse_time = nn.functional.mse_loss(y_hat_c_t, yt)
             err_time = nn.functional.l1_loss(y_hat_c_t, yt)
             y_hat_c_t_abs_log = (y_hat_c_t.abs()+self.eps).log()
@@ -196,10 +219,9 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             kld_time_abs_log = nn.functional.kl_div(y_hat_c_t_abs_log,yt_abs_log,log_target=True).abs()
 
             err_timedelay = t.mean(t.log(t.abs(t.argmax(y_hat_c_t,dim=1) - t.argmax(yt))+1))
-            err_peak = 0.5*t.mean(t.abs(t.argmax(y_hat_c_t,dim=1) - t.argmax(yt))/yt.shape[1] \
+            err_peak = 0.5*t.mean(t.abs(t.argmax(y_hat_c_t, dim = 1) - t.argmax(yt))/yt.shape[1] \
                 + 0.5*t.abs(t.max(y_hat_c_t,dim=1)[0] - t.max(yt)))
             err_peakval = t.mean(t.abs(y_hat_c_t[:,t.argmax(yt)] - t.max(yt)))
-        
         
             mse_real = nn.functional.mse_loss(t.real(y_hat_c),t.real(y_c))
             mse_imag = nn.functional.mse_loss(t.imag(y_hat_c),t.imag(y_c))
@@ -296,6 +318,20 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
         return [optimizer], [scheduler]
+
+    def make_pred_speech_plot(self, batch_idx, gt_speech_fft, pred_speech_fft, gt_speech_time, pred_speech_time):
+        fh = plt.figure()
+        fig, axes = plt.subplots(2, 2, figsize=(6, 6), tight_layout=True)
+        # axes[0, 0].imshow(t.abs(gt_speech_fft[0, 0, :, :]).cpu().detach().numpy(), aspect='auto')
+        # axes[0, 0].set_title("GT Speech FFT Magnitude")
+        # axes[0, 1].imshow(t.abs(pred_speech_fft[0, 0, :, :]).cpu().detach().numpy(), aspect='auto')
+        # axes[0, 1].set_title("Predicted Speech FFT Magnitude")
+        axes[1, 0].plot(gt_speech_time[0, 0].cpu().detach().numpy())
+        axes[1, 0].set_title("GT Speech Time Domain")
+        axes[1, 1].plot(pred_speech_time[0, 0].cpu().detach().numpy())
+        axes[1, 1].set_title("Predicted Speech Time Domain")
+        tb = self.logger.experiment
+        tb.add_figure('Speech', fig, global_step=self.global_step)
 
     def make_plot(self,batch_idx,x,y,y_hat,y_hat_c,ytfn):
         if (batch_idx==0) and (self.device.index==0) and (torch.utils.data.get_worker_info() is None):
