@@ -26,6 +26,13 @@ class DareDataset(Dataset):
         self.device = device
 
         self.config = config
+
+        # wavenet specific stuff
+        self.model  = config['Model']['model_name']
+        self.waveunet_input_samples  = 73721
+        self.waveunet_output_samples = 32777
+        ###################
+        
         
         self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
         self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
@@ -116,7 +123,8 @@ class DareDataset(Dataset):
                 rir,
                 pad_width=(0, np.max((0,self.rir_duration - len(rir)))), # 0-padding at end has no effect on reverb results so is ok
                 )
-            rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
+            if self.config["prealign_rir"]:
+                rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
             reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
             
@@ -128,12 +136,40 @@ class DareDataset(Dataset):
             # plt.savefig(f"speech_samps/plots/{idx}.png")
             # plt.clf()
 
+
+            ###### Wavenet bandaid ########
+            # Fix the misaligment between the clean speech and the reverberant speech (possibly matters for wave-u-net)
+            reverb_speech = reverb_speech[4096:] # was 4097, reverb speech seemed to be one sample early.
+            
+            # This is sloppy but effective. I need to process the data differently to use it with the wave-u-net,
+            # so I do that here then return.
+            if self.model == 'Waveunet': 
+                reverb_speech = np.pad(
+                    reverb_speech,
+                    pad_width=(0, np.max((0,135141 - len(reverb_speech)))),
+                    )
+                reverb_speech = reverb_speech[:135141] # expected input size given 15 up, 5 down filters and 2sec output
+
+                speech = np.pad(
+                    speech,
+                    pad_width=(0, np.max((0,135141 - len(speech)))),
+                    )
+                speech = speech[:135141]               # expected input size given 15 up, 5 down filters and 2sec output
+
+                rir = np.pad(
+                    rir,
+                    pad_width=(0, np.max((0,32777 - len(rir)))),
+                    )            
+                return reverb_speech, speech, rir
+
+            
+
             reverb_speech = np.pad(
                 reverb_speech,
                 pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
                 )
             reverb_speech = reverb_speech[:self.reverb_speech_duration]
-
+            #####################
 
 
             # # sanity check. decode reverb speech
