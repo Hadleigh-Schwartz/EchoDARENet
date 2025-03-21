@@ -315,26 +315,31 @@ class Waveunet(pl.LightningModule):
         #print("RIR loss    = " + str(rirLoss))
 
         # Diagnostic figures
-        #print("out[speech].shape = " + str(out["speech"].shape))
-        #x = centre_crop(x, out["speech"])
-        #y = centre_crop(y, out["speech"])
-        #fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1, 5)
-        #fig.set_size_inches(24, 4.8)
-        #ax1.plot(x[0,0,:].cpu().squeeze().detach().numpy())
-        #ax2.plot(y[0,0,:].cpu().squeeze().detach().numpy())
-        #ax3.plot(z[0,0,:].cpu().squeeze().detach().numpy())
-        #ax4.plot(out["speech"][0,0,:].cpu().squeeze().detach().numpy())
-        #ax5.plot(out["rir"][0,0,:].cpu().squeeze().detach().numpy())
-        #ax1.title.set_text("Cropped Reverb Speech")
-        #ax2.title.set_text("Cropped Clean Speech")
-        #ax3.title.set_text("GT RIR")
-        #ax4.title.set_text("Predicted Clean Speech")
-        #ax5.title.set_text("Predicted RIR")
-        ##ax3.set_xlim(2000, 6000)
-        #ax3.set_xlim(3100, 3300)
-        #plt.show()
+        if batch_idx % 100 == 0:
+            print("out[speech].shape = " + str(out["speech"].shape))
+            fh = plt.figure()
+            x = centre_crop(x, out["speech"])
+            y = centre_crop(y, out["speech"])
+            fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1, 5)
+            fig.set_size_inches(24, 4.8)
+            ax1.plot(x[0,0,:].cpu().squeeze().detach().numpy())
+            ax2.plot(y[0,0,:].cpu().squeeze().detach().numpy())
+            ax3.plot(z[0,0,:].cpu().squeeze().detach().numpy())
+            ax4.plot(out["speech"][0,0,:].cpu().squeeze().detach().numpy())
+            ax5.plot(out["rir"][0,0,:].cpu().squeeze().detach().numpy())
+            ax1.title.set_text("Cropped Reverb Speech")
+            ax2.title.set_text("Cropped Clean Speech")
+            ax3.title.set_text("GT RIR")
+            ax4.title.set_text("Predicted Clean Speech")
+            ax5.title.set_text("Predicted RIR")
+            #ax3.set_xlim(2000, 6000)
+            ax3.set_xlim(3100, 3300)
+            tb = self.logger.experiment
+            tb.add_figure('Speech Pred', fig, global_step=self.global_step)
+            plt.close()
+            
 
-        self.log("loss", {'train': loss })
+        # self.log("loss", {'train': loss })
         self.log("train_loss", loss )
         self.log("train_speechMSEloss", speechMSEloss)
         #self.log("train_rirMSEloss", rirMSEloss)
@@ -363,7 +368,7 @@ class Waveunet(pl.LightningModule):
         # Not sure how to balance the 2 terms for this
         #loss = speechMSEloss + rirMRSTFTloss
         
-        self.log("loss", {'val': loss })
+        # self.log("loss", {'val': loss })
         self.log("val_loss", loss )
         self.log("val_speechMSEloss", speechMSEloss )
         #self.log("val_rirMSEloss", rirMSEloss )
@@ -393,7 +398,7 @@ class Waveunet(pl.LightningModule):
         # Try nn.functional.l1_loss() for the RIR
         # Try a multiresolution FFT loss per Chrisitan's auraloss library
 
-        self.log("loss", {'test': loss })
+        # self.log("loss", {'test': loss })
         self.log("test_loss", loss )
         self.log("test_speechMSEloss", speechMSEloss )
         #self.log("test_rirMSEloss", rirMSEloss )
