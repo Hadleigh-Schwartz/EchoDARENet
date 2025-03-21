@@ -2,6 +2,7 @@ import torch
 #import torch.nn as nn
 from torch import optim, nn
 import pytorch_lightning as pl
+from torchaudio.functional import highpass_biquad
 
 from WaveUnet.crop import centre_crop
 from WaveUnet.resample import Resample1d
@@ -9,6 +10,13 @@ from WaveUnet.conv import ConvLayer
 
 import auraloss # for MR-STFT loss 
 import matplotlib.pyplot as plt # for diagnostics only
+
+curr_dir = os.getcwd()
+echo_dir = curr_dir.split("EchoDARENet")[0] 
+sys.path.append(echo_dir)
+from traditional_echo_hiding import torch_get_cepstrum, torch_get_autocepstrum, delays
+
+
 
 class UpsamplingBlock(nn.Module):
     def __init__(self, n_inputs, n_shortcut, n_outputs, kernel_size, stride, depth, conv_type, res):
@@ -268,6 +276,82 @@ class Waveunet(pl.LightningModule):
             for idx, inst in enumerate(self.instruments):
                 out_dict[inst] = out[:, idx * self.num_outputs:(idx + 1) * self.num_outputs]
             return out_dict
+        
+    def softargmax(self, x, beta=1e2):
+        """
+        beta original 1e10
+        From StackOverflow user Lostefra
+        https://stackoverflow.com/questions/46926809/getting-around-tf-argmax-which-is-not-differentiable
+        """
+        x_range = torch.arange(x.shape[-1], dtype=x.dtype)
+        # print(torch.nn.functional.softmax(x*beta, dim=-1))
+        # print(torch.nn.functional.softmax(x*beta, dim=-1) * x_range)
+        # print("----------------")
+        return torch.sum(torch.nn.functional.softmax(x*beta, dim=-1) * x_range, dim=-1)
+
+
+    def torch_decode(self, audio_batch, symbols):
+        for audio_idx in range(audio_batch.shape[0]):
+            audio = audio_batch[audio_idx, 0, :]
+            num_wins = audio.shape[0] // self.config["Encoding"]["win_size"]
+
+            pred_symbols = [] 
+            pred_symbols_autocepstrum = []
+            diff_counter = 0
+            diff_counter_autocepstrum = 0
+            if self.config["Encoding"]["cutoff_freq"] is not None: # high-pass filter the window 
+                audio = highpass_biquad(audio,  self.config["Encoding"]["cutoff_freq"] , self.config["sample_rate"])
+            
+            for i in range(num_wins):
+                win = audio[i * self.config["Encoding"]["win_size"]: (i + 1) * self.config["Encoding"]["win_size"]]
+                # cepstrum peak decoding
+                cepstrum = torch_get_cepstrum(win)
+                # if pn is not None:
+                #     cepstrum = np.correlate(cepstrum, pn) # unspread the cepstrum 
+                cep_vals = cepstrum[delays]
+                max_val = self.softargmax(cep_vals)
+                diff_counter = diff_counter + torch.clamp(torch.abs(max_val - symbols[i]), min = 0, max = 1)
+                pred_symbols.append(max_val.item())
+
+
+                # sanity check. make sure torch implementation is correct
+                # test_cepstrum = get_cepstrum(win.numpy())
+                # test_cep_vals = test_cepstrum[delays]
+                # test_max_val = np.argmax(test_cep_vals)
+                # fig, axes = plt.subplots(3, 1, figsize = (12, 5), tight_layout = True)
+                # cepstrum_np = cepstrum.numpy()
+                # cepstrum_np_min = np.min(cepstrum_np[3:-3])
+                # cepstrum_np_max = np.max(cepstrum_np[3:-3])
+                # test_cepstrum_min = np.min(test_cepstrum[3:-3])
+                # test_cepstrum_max = np.max(test_cepstrum[3:-3])
+                # axes[0].plot(win.numpy())
+                # axes[1].plot(cepstrum_np)
+                # axes[1].vlines(delays, cepstrum_np_min, cepstrum_np_max, linestyles = "dashed", color = 'gray', alpha = 0.5)
+                # axes[1].set_xlim(1, max(delays) + 10)
+                # axes[1].set_ylim(cepstrum_np_min, cepstrum_np_max)
+                # axes[2].plot(test_cepstrum)
+                # axes[2].vlines(delays, test_cepstrum_min, test_cepstrum_max, linestyles = "dashed", color = 'gray', alpha = 0.5)
+                # axes[2].set_xlim(1, max(delays) + 10)
+                # axes[2].set_ylim(test_cepstrum_min, test_cepstrum_max)
+                # plt.savefig(f"temp/cepstrum_win{i}.png")
+                # plt.clf()
+            
+                # autocepstrum peak decoding
+                autocepstrum = torch_get_autocepstrum(win)
+                # if pn is not None:
+                #     autocepstrum = np.correlate(autocepstrum, pn) # unspread the autocepstrum
+                autocepstrum_vals  = autocepstrum[delays]
+                max_autocepstrum_val  = self.softargmax(autocepstrum_vals )
+                diff_counter_autocepstrum = diff_counter_autocepstrum + torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
+                pred_symbols_autocepstrum.append(max_autocepstrum_val.item())
+            
+            # # actual error rate
+            # err = np.sum(np.array(pred_symbols) != np.array(symbols.detach().numpy()))
+            # err_autocepstrum = np.sum(np.array(pred_symbols_autocepstrum) != np.array(symbols.detach().numpy()))    
+            # print(f"Num err symbols torch: {err}/{len(pred_symbols)}\nNum err symbols autocep torch {err_autocepstrum}/{len(pred_symbols_autocepstrum)}")
+
+        return pred_symbols, pred_symbols_autocepstrum, diff_counter, diff_counter_autocepstrum
+
 
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
@@ -316,7 +400,7 @@ class Waveunet(pl.LightningModule):
 
         # Diagnostic figures
         if batch_idx % 100 == 0:
-            print("out[speech].shape = " + str(out["speech"].shape))
+            # print("out[speech].shape = " + str(out["speech"].shape))
             fh = plt.figure()
             x = centre_crop(x, out["speech"])
             y = centre_crop(y, out["speech"])

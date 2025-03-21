@@ -3,13 +3,15 @@ random_seed: 230
 
 stft_format: realimag # realimag or magphase
 stft_format_sp: magphase # not used for Wavenet
+sample_rate: 16000
+output_len: 32777
 rir_duration: 32767
 nfft: 32767
 nhop: 4096
 nfrms: 16
 min_early_reverb: 0.004 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 echo_encode: True
-prealign_rir: True
+prealign_rir: False
                
 data_in_ram: False
 
@@ -20,6 +22,7 @@ Encoding: # echo encoding params
   win_size: 2048
   kernel: "bp"
   decoding: "autocepstrum" # options: "autocepstrum", "cepstrum"
+  cutoff_freq: 1000
 
 
 Model:

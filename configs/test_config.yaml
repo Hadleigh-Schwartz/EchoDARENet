@@ -6,6 +6,7 @@ rir_duration: 32767
 nfft: 32767
 nhop: 4096
 nfrms: 16
+prealign_rir: False
 
 Model:
   model_name: SpeechDAREUnet_v2
