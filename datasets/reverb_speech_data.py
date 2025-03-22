@@ -64,6 +64,8 @@ class DareDataset(Dataset):
             self.delays = config["Encoding"]["delays"]
             self.win_size = config["Encoding"]["win_size"]
             self.kernel = config["Encoding"]["kernel"]
+            self.decoding = config["Encoding"]["decoding"]
+            self.cutoff_freq = config["Encoding"]["cutoff_freq"]
 
     def __len__(self):
         return self.dataset_len
@@ -80,6 +82,11 @@ class DareDataset(Dataset):
             # This is sloppy but effective. I need to process the data differently to use it with the wave-u-net,
             # so I do that here then return.
             if self.model == 'Waveunet': 
+                speech = np.pad(
+                    speech,
+                    pad_width=(0, np.max((0,self.config["rir_duration"] - len(speech)))),
+                    )
+                speech = speech[:self.config["rir_duration"]]
                 if self.config["echo_encode"]:
                     num_wins = len(speech) // self.win_size
                     symbols = np.random.randint(0, len(self.delays), size = num_wins)
@@ -87,7 +94,7 @@ class DareDataset(Dataset):
                     speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
         
                     # decode encoded speech to get baseline error rate
-                    pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+                    pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = self.cutoff_freq)
                     num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
                     num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
                     if self.config["Encoding"]["decoding"] == "autocepstrum":
@@ -96,9 +103,8 @@ class DareDataset(Dataset):
                         baseline_error_rate = num_errs / len(pred_symbols)
                     else:
                         raise Exception("Unknown decoding method. Specify 'autocepstrum' or 'cepstrum'.")
-
-                    # sanity check - save encoded speech
-                    # sf.write(f'speech_samps/encoded/speech_{idx}.wav', speech, self.samplerate)
+                    
+                    # print(f"Encoded is {len(speech)} samples. Num wins is {num_wins}. Num errors symbols og: {num_errs}/{len(pred_symbols)}. Num errors symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}"))
                 else:
                     symbols = 0
                     baseline_error_rate = 0
@@ -128,9 +134,29 @@ class DareDataset(Dataset):
                     rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
                 reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
-                # Fix the misaligment between the clean speech and the reverberant speech (possibly matters for wave-u-net)
-                reverb_speech = reverb_speech[4096:] # was 4097, reverb speech seemed to be one sample early.
-            
+
+                if self.config["prealign_rir"]:
+                    # Fix the misaligment between the clean speech and the reverberant speech (possibly matters for wave-u-net)
+                    reverb_speech = reverb_speech[4096:] # was 4097, reverb speech seemed to be one sample early.
+
+                # reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
+                # rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = self.cutoff_freq)
+                # rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
+                # rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
+                # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+
+
+                # plt.plot(speech, label = "orig", alpha = 0.5)
+                # plt.plot(reverb_speech, label = "reverb", alpha = 0.5)
+                # plt.legend()
+                # plt.savefig(f"speech_samps/plots/{idx}.png")
+                # plt.clf()
+
+                # try normalizing, as rir is
+                speech = speech - np.mean(speech)
+                speech = speech / np.max(np.abs(speech))
+                reverb_speech = reverb_speech - np.mean(reverb_speech)
+                reverb_speech = reverb_speech / np.max(np.abs(reverb_speech))
 
                 reverb_speech = np.pad(
                     reverb_speech,
@@ -143,22 +169,9 @@ class DareDataset(Dataset):
                     pad_width=(0, np.max((0,135141 - len(speech)))),
                     )
                 speech = speech[:135141]               # expected input size given 15 up, 5 down filters and 2sec output
+                return reverb_speech, speech, rir, symbols, baseline_error_rate
 
-                rir = np.pad(
-                    rir,
-                    pad_width=(0, np.max((0,32777 - len(rir)))),
-                    )            
-                return reverb_speech, speech, rir
-
-            else:
-
-                reverb_speech = np.pad(
-                    reverb_speech,
-                    pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
-                    )
-                reverb_speech = reverb_speech[:self.reverb_speech_duration]
-                #####################
-    
+            else:   
                 speech = np.pad(
                     speech,
                     pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
@@ -212,6 +225,12 @@ class DareDataset(Dataset):
                     rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
                 reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
+
+                reverb_speech = np.pad(
+                    reverb_speech,
+                    pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
+                    )
+                reverb_speech = reverb_speech[:self.reverb_speech_duration]
                 
                 #  # sanity check. save the reverb speech and plot it
                 # sf.write(f'speech_samps/reverb/reverbed_{idx}.wav',reverb_speech, self.samplerate)

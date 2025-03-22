@@ -11,10 +11,13 @@ from WaveUnet.conv import ConvLayer
 import auraloss # for MR-STFT loss 
 import matplotlib.pyplot as plt # for diagnostics only
 
+import sys
+import os
+
 curr_dir = os.getcwd()
 echo_dir = curr_dir.split("EchoDARENet")[0] 
 sys.path.append(echo_dir)
-from traditional_echo_hiding import torch_get_cepstrum, torch_get_autocepstrum, delays
+from traditional_echo_hiding import torch_get_cepstrum, torch_get_autocepstrum
 
 
 
@@ -123,8 +126,22 @@ class DownsamplingBlock(nn.Module):
         return curr_size
 
 class Waveunet(pl.LightningModule):
-    def __init__(self, num_inputs, num_channels, num_outputs, instruments, kernel_size_down, kernel_size_up, target_output_size, conv_type, res, separate=False, depth=1, strides=2, learning_rate=0.0001):
+    def __init__(self, num_inputs, num_channels, num_outputs, instruments, kernel_size_down, kernel_size_up, target_output_size, conv_type, res, separate=False, depth=1, strides=2, learning_rate=0.0001, 
+    config = None):
         super(Waveunet, self).__init__()
+        # TODO: Initialize values based on config
+
+        if config is not None:
+            self.amplitude = config["Encoding"]["amplitude"]
+            self.delays = config["Encoding"]["delays"]
+            self.win_size = config["Encoding"]["win_size"]
+            self.kernel = config["Encoding"]["kernel"]
+            self.decoding = config["Encoding"]["decoding"]
+            self.cutoff_freq = config["Encoding"]["cutoff_freq"]
+            self.sample_rate = config["sample_rate"]
+        else:
+            raise Exception("Need config to decode")
+
 
         self.name = "Waveunet"
         self.num_levels = len(num_channels)
@@ -277,86 +294,57 @@ class Waveunet(pl.LightningModule):
                 out_dict[inst] = out[:, idx * self.num_outputs:(idx + 1) * self.num_outputs]
             return out_dict
         
-    def softargmax(self, x, beta=1e2):
+    def softargmax(self, x, beta=1e10):
         """
         beta original 1e10
         From StackOverflow user Lostefra
         https://stackoverflow.com/questions/46926809/getting-around-tf-argmax-which-is-not-differentiable
         """
-        x_range = torch.arange(x.shape[-1], dtype=x.dtype)
-        # print(torch.nn.functional.softmax(x*beta, dim=-1))
-        # print(torch.nn.functional.softmax(x*beta, dim=-1) * x_range)
-        # print("----------------")
+        x_range = torch.arange(x.shape[-1], dtype=x.dtype, device = x.device)
         return torch.sum(torch.nn.functional.softmax(x*beta, dim=-1) * x_range, dim=-1)
 
 
-    def torch_decode(self, audio_batch, symbols):
+    def torch_decode(self, audio_batch, symbols_batch):
+        diff_counter = 0
+        diff_counter_autocepstrum = 0
         for audio_idx in range(audio_batch.shape[0]):
             audio = audio_batch[audio_idx, 0, :]
-            num_wins = audio.shape[0] // self.config["Encoding"]["win_size"]
+            symbols = symbols_batch[audio_idx]
+            num_wins = audio.shape[0] // self.win_size
 
             pred_symbols = [] 
             pred_symbols_autocepstrum = []
-            diff_counter = 0
-            diff_counter_autocepstrum = 0
-            if self.config["Encoding"]["cutoff_freq"] is not None: # high-pass filter the window 
-                audio = highpass_biquad(audio,  self.config["Encoding"]["cutoff_freq"] , self.config["sample_rate"])
+            batch_diff_counter = 0
+            batch_diff_counter_autocepstrum = 0
+            if self.cutoff_freq is not None: # high-pass filter the window 
+                audio = highpass_biquad(audio,  self.cutoff_freq , self.sample_rate)
             
             for i in range(num_wins):
-                win = audio[i * self.config["Encoding"]["win_size"]: (i + 1) * self.config["Encoding"]["win_size"]]
-                # cepstrum peak decoding
+                win = audio[i * self.win_size: (i + 1) * self.win_size]
+               
                 cepstrum = torch_get_cepstrum(win)
-                # if pn is not None:
-                #     cepstrum = np.correlate(cepstrum, pn) # unspread the cepstrum 
-                cep_vals = cepstrum[delays]
+                cep_vals = cepstrum[self.delays]
                 max_val = self.softargmax(cep_vals)
-                diff_counter = diff_counter + torch.clamp(torch.abs(max_val - symbols[i]), min = 0, max = 1)
+                batch_diff_counter = diff_counter + torch.clamp(torch.abs(max_val - symbols[i]), min = 0, max = 1)
                 pred_symbols.append(max_val.item())
-
-
-                # sanity check. make sure torch implementation is correct
-                # test_cepstrum = get_cepstrum(win.numpy())
-                # test_cep_vals = test_cepstrum[delays]
-                # test_max_val = np.argmax(test_cep_vals)
-                # fig, axes = plt.subplots(3, 1, figsize = (12, 5), tight_layout = True)
-                # cepstrum_np = cepstrum.numpy()
-                # cepstrum_np_min = np.min(cepstrum_np[3:-3])
-                # cepstrum_np_max = np.max(cepstrum_np[3:-3])
-                # test_cepstrum_min = np.min(test_cepstrum[3:-3])
-                # test_cepstrum_max = np.max(test_cepstrum[3:-3])
-                # axes[0].plot(win.numpy())
-                # axes[1].plot(cepstrum_np)
-                # axes[1].vlines(delays, cepstrum_np_min, cepstrum_np_max, linestyles = "dashed", color = 'gray', alpha = 0.5)
-                # axes[1].set_xlim(1, max(delays) + 10)
-                # axes[1].set_ylim(cepstrum_np_min, cepstrum_np_max)
-                # axes[2].plot(test_cepstrum)
-                # axes[2].vlines(delays, test_cepstrum_min, test_cepstrum_max, linestyles = "dashed", color = 'gray', alpha = 0.5)
-                # axes[2].set_xlim(1, max(delays) + 10)
-                # axes[2].set_ylim(test_cepstrum_min, test_cepstrum_max)
-                # plt.savefig(f"temp/cepstrum_win{i}.png")
-                # plt.clf()
             
-                # autocepstrum peak decoding
                 autocepstrum = torch_get_autocepstrum(win)
-                # if pn is not None:
-                #     autocepstrum = np.correlate(autocepstrum, pn) # unspread the autocepstrum
-                autocepstrum_vals  = autocepstrum[delays]
+                autocepstrum_vals  = autocepstrum[self.delays]
                 max_autocepstrum_val  = self.softargmax(autocepstrum_vals )
-                diff_counter_autocepstrum = diff_counter_autocepstrum + torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
+                batch_diff_counter_autocepstrum = diff_counter_autocepstrum + torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
                 pred_symbols_autocepstrum.append(max_autocepstrum_val.item())
-            
-            # # actual error rate
-            # err = np.sum(np.array(pred_symbols) != np.array(symbols.detach().numpy()))
-            # err_autocepstrum = np.sum(np.array(pred_symbols_autocepstrum) != np.array(symbols.detach().numpy()))    
-            # print(f"Num err symbols torch: {err}/{len(pred_symbols)}\nNum err symbols autocep torch {err_autocepstrum}/{len(pred_symbols_autocepstrum)}")
 
-        return pred_symbols, pred_symbols_autocepstrum, diff_counter, diff_counter_autocepstrum
+            diff_counter = diff_counter + batch_diff_counter
+            diff_counter_autocepstrum = diff_counter_autocepstrum + batch_diff_counter_autocepstrum
+        err_rate = diff_counter / audio_batch.shape[0]
+        err_rate_autocepstrum = diff_counter_autocepstrum / audio_batch.shape[0]
+        return err_rate, err_rate_autocepstrum
 
 
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward (but uses it)
-        x, y, z = batch # reverberant speech, clean speech, RIR # should be all time domain
+        x, y, z, symbols, baseline_error_rate = batch # reverberant speech, clean speech, RIR # should be all time domain
 
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
@@ -375,17 +363,10 @@ class Waveunet(pl.LightningModule):
         #loss = nn.functional.mse_loss(out["speech"], y) + nn.functional.mse_loss(out["rir"], z)
         
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
-        #rirMSEloss    = nn.functional.mse_loss(out["rir"], z)
-        #rirMRSTFTloss = self.mrstftLoss(out["rir"], z)/400 # NOTE THE SCALE FACTOR!!
 
-        #loss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"])) + nn.functional.mse_loss(out["rir"], z)
-        #loss = speechMSEloss + rirMSEloss 
-        #loss = speechMSEloss + 5.0*rirMSEloss # 5x RIR seems to put them in better balance but worked poorly
-        loss = speechMSEloss                  # Can I get better clean speech by ignoring the RIR?
-        
-        # Not sure how to balance the 2 terms for this
-        #loss = speechMSEloss + rirMRSTFTloss
-        
+        err_rate, err_rate_autocepstrum = self.torch_decode(out["speech"], symbols)
+        loss = err_rate
+       
         #MR-STFT loss
         fft_sizes   = [16, 128, 512, 2048]
         hop_sizes   = [ 8,  64, 256, 1024]
@@ -434,7 +415,7 @@ class Waveunet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         # validation_step defines the train loop.
         # it is independent of forward (but uses it)
-        x, y, z = batch # reverberant speech, clean speech, RIR # should be all time domain
+        x, y, z, symbols, baseline_error_rate = batch # reverberant speech, clean speech, RIR # should be all time domain
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
         x = x[:, None, :].float()
@@ -463,7 +444,7 @@ class Waveunet(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         # test_step for trainer.test()
         # it is independent of forward (but uses it)
-        x, y, z = batch # reverberant speech, clean speech, RIR # should be all time domain
+        x, y, z,  symbols, baseline_error_rate = batch # reverberant speech, clean speech, RIR # should be all time domain
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
         x = x[:, None, :].float()

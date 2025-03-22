@@ -40,7 +40,8 @@ def main(args):
                         [features*2**i for i in range(0, levels)]
     target_outputs   = int(output_size * sr)
     learning_rate    = cfg['Model']['learning_rate']
-    model            = Waveunet(channels, num_features, channels, instruments, kernel_size_down=kernel_size_down, kernel_size_up=kernel_size_up, target_output_size=target_outputs, conv_type=conv_type, res=res, separate=False, learning_rate=learning_rate)
+    model            = Waveunet(channels, num_features, channels, instruments, kernel_size_down=kernel_size_down, kernel_size_up=kernel_size_up, target_output_size=target_outputs, conv_type=conv_type, res=res, separate=False, learning_rate=learning_rate, 
+                        config = cfg)
 
     print("Using model " + model.name)
     # Data Module
