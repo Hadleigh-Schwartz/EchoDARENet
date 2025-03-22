@@ -21,9 +21,13 @@ sys.path.append(echo_dir)
 
 
 class DecodingLoss(nn.Module):
-    def __init__(self, softargmax_beta=1e10):
+    def __init__(self, delays, win_size, decoding, cutoff_freq, sample_rate, softargmax_beta=1e10):
         super(DecodingLoss, self).__init__()
-
+        self.delays = delays
+        self.win_size = win_size
+        self.decoding = decoding
+        self.cutoff_freq = cutoff_freq
+        self.sample_rate = sample_rate
         self.softargmax_beta = softargmax_beta
 
     def forward(self, audio_batch, symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
@@ -31,9 +35,20 @@ class DecodingLoss(nn.Module):
         TODO: check out these to make more efficient
         https://discuss.pytorch.org/t/apply-a-function-similar-to-map-on-a-tensor/51088/5
         https://pytorch.org/functorch/stable/generated/functorch.vmap.html
+
+        Parameters:
+            audio_batch : torch.Tensor (batch_size, 1, num_samples)
+                Batch of audio samples in time domain
+            symbols_batch : torch.Tensor (batch_size, num_symbols) 
+                Batch of groudn-truth symbols that were encoded onto the clean speech
+            num_errs_no_reverb_batch : torch.Tensor (batch_size)
+                Batch of number of errors when decoding the encoded clean speech (these can occur due to confounding peaks in speech 
+                cepstra and are independent of the reverb or network)
+            num_errs_reverb_batch : torch.Tensor (batch_size)
+                Batch of number of errors when decoding the encoded reverb speech 
         """
         tot_symbol_errs = 0 # total symbol errors (differentiable)
-        err_reduction_loss = 0 # accrue total error reduction (differentiable)
+        total_err_reduction = 0 # accrue total error reduction (differentiable)
         num_symbols_per_audio = symbols_batch.shape[1]
         max_audio_len = num_symbols_per_audio * self.win_size
         for audio_idx in range(audio_batch.shape[0]):
@@ -44,8 +59,14 @@ class DecodingLoss(nn.Module):
             num_wins = audio.shape[0] // self.win_size
             curr_audio_num_err_symbols = 0
             pred_symbols = []
+            fig, axes = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
+            axes[0].plot(audio.cpu().numpy())
             if self.cutoff_freq is not None: # high-pass filter the window 
-                audio = highpass_biquad(audio,  self.cutoff_freq , self.sample_rate)
+                audio = highpass_biquad(audio,  self.cutoff_freq , self.sample_rate) # FILTERING IS WRONG???
+            axes[1].plot(audio.cpu().numpy())
+            axes[1].set_title(f"Filtered Audio - {self.cutoff_freq} Hz cutoff")
+            plt.savefig(f"audio_{audio_idx}.png")
+            plt.close(fig)
             
             for i in range(num_wins):
                 win = audio[i * self.win_size: (i + 1) * self.win_size]
@@ -56,7 +77,7 @@ class DecodingLoss(nn.Module):
                     max_val = self.softargmax(cep_vals)
                     cep_loss_val = torch.clamp(torch.abs(max_val - symbols[i]), min = 0, max = 1)
                     curr_audio_num_err_symbols= curr_audio_num_err_symbols + cep_loss_val
-                    pred_symbols.append(max_val.item())
+                    pred_symbols.append(int(max_val.item()))
 
                     # # get actual decoded symbol (non-differentiable, for debug)
                     # cep_vals_nondiff = cep_vals.clone()
@@ -70,7 +91,7 @@ class DecodingLoss(nn.Module):
                     max_autocepstrum_val  = self.softargmax(autocepstrum_vals )
                     autocep_loss_val = torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
                     curr_audio_num_err_symbols = curr_audio_num_err_symbols + autocep_loss_val
-                    pred_symbols.append(max_autocepstrum_val.item())
+                    pred_symbols.append(int(max_autocepstrum_val.item()))
                     
                     # autocep_vals_nondiff = autocepstrum_vals.clone()
                     # autocep_vals_nondiff = autocep_vals_nondiff.detach().cpu().numpy()
@@ -78,17 +99,16 @@ class DecodingLoss(nn.Module):
                     # if max_autocepstrum_val_nondiff != symbols[i]:
                     #     tot_symbol_errors += 1 
                     
-            # print(pred_symbols)
-            # print(pred_symbols_autocepstrum)
-            # print(symbols)
-            # print('-----------------')
+            print(pred_symbols) 
+            print(symbols.detach().cpu().numpy().tolist())
+            print('-----------------')
             tot_symbol_errs = tot_symbol_errs + curr_audio_num_err_symbols
-            err_reduction = ((num_errs_reverb - num_errs_no_reverb) - (curr_audio_num_err_symbols - num_errs_no_reverb)) / (num_errs_reverb - num_errs_no_reverb)
-            err_reduction_loss = err_reduction_loss + (1 - err_reduction)
+            curr_audio_err_reduction = ((num_errs_reverb - num_errs_no_reverb) - (curr_audio_num_err_symbols - num_errs_no_reverb)) / (num_errs_reverb - num_errs_no_reverb)
+            total_err_reduction = total_err_reduction + (1 - curr_audio_err_reduction)
 
         symbol_err_rate = tot_symbol_errs / (audio_batch.shape[0] * num_symbols_per_audio)
-        err_reduction_loss = err_reduction_loss / audio_batch.shape[0]
-        return symbol_err_rate, tot_symbol_errs
+        avg_err_reduction = total_err_reduction / audio_batch.shape[0]
+        return symbol_err_rate, tot_symbol_errs, avg_err_reduction
 
     def softargmax(self, x):
         """
@@ -262,15 +282,12 @@ class Waveunet(pl.LightningModule):
     config = None):
         super(Waveunet, self).__init__()
         # TODO: Initialize values based on config
+        # TODO: make option of no decoding
 
         if config is not None:
-            self.amplitude = config["Encoding"]["amplitude"]
-            self.delays = config["Encoding"]["delays"]
-            self.win_size = config["Encoding"]["win_size"]
-            self.kernel = config["Encoding"]["kernel"]
-            self.decoding = config["Encoding"]["decoding"]
-            self.cutoff_freq = config["Encoding"]["cutoff_freq"]
-            self.sample_rate = config["sample_rate"]
+            if config["echo_encode"] == False:
+                raise Exception("Currently cannot use WaveUnet if config is not using echo encoding")
+            self.decoding_loss = DecodingLoss(config["Encoding"]["delays"], config["Encoding"]["win_size"], config["Encoding"]["decoding"], config["Encoding"]["cutoff_freq"], config["sample_rate"])
         else:
             raise Exception("Need config to decode")
 
