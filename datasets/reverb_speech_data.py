@@ -98,16 +98,16 @@ class DareDataset(Dataset):
                     num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
                     num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
                     if self.config["Encoding"]["decoding"] == "autocepstrum":
-                        baseline_error_rate = num_errs_autocepstrum / len(pred_symbols_autocepstrum )
+                        baseline_num_errors = num_errs_autocepstrum 
                     elif self.config["Encoding"]["decoding"] == "cepstrum":
-                        baseline_error_rate = num_errs / len(pred_symbols)
+                        baseline_num_errors = num_errs 
                     else:
                         raise Exception("Unknown decoding method. Specify 'autocepstrum' or 'cepstrum'.")
                     
                     # print(f"Encoded is {len(speech)} samples. Num wins is {num_wins}. Num errors symbols og: {num_errs}/{len(pred_symbols)}. Num errors symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}"))
                 else:
                     symbols = 0
-                    baseline_error_rate = 0
+                    baseline_num_errors = 0
 
                 rir,rirfn = self.rir_dataset[idx_rir]
                 rir = rir.flatten()
@@ -169,7 +169,7 @@ class DareDataset(Dataset):
                     pad_width=(0, np.max((0,135141 - len(speech)))),
                     )
                 speech = speech[:135141]               # expected input size given 15 up, 5 down filters and 2sec output
-                return reverb_speech, speech, rir, symbols, baseline_error_rate
+                return reverb_speech, speech, rir, symbols, baseline_num_errors
 
             else:   
                 speech = np.pad(
@@ -188,9 +188,9 @@ class DareDataset(Dataset):
                     num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
                     num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
                     if self.config["Encoding"]["decoding"] == "autocepstrum":
-                        baseline_error_rate = num_errs_autocepstrum / len(pred_symbols_autocepstrum )
+                        baseline_num_errors = num_errs_autocepstrum
                     elif self.config["Encoding"]["decoding"] == "cepstrum":
-                        baseline_error_rate = num_errs / len(pred_symbols)
+                        baseline_num_errors = num_errs 
                     else:
                         raise Exception("Unknown decoding method. Specify 'autocepstrum' or 'cepstrum'.")
 
@@ -198,7 +198,7 @@ class DareDataset(Dataset):
                     # sf.write(f'speech_samps/encoded/speech_{idx}.wav', speech, self.samplerate)
                 else:
                     symbols = 0
-                    baseline_error_rate = 0
+                    baseline_num_errors = 0
 
                 rir,rirfn = self.rir_dataset[idx_rir]
                 rir = rir.flatten()
@@ -306,12 +306,12 @@ class DareDataset(Dataset):
                 rir_fft = rir_fft / np.max(np.abs(rir_fft))
 
                 if self.data_in_ram:
-                    self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_error_rate))
+                    self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_num_errors))
                     self.idx_to_data[idx] = len(self.data) - 1
             # trim speech_wav by one sample to match the inverse STFT output in the model 
-            return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, baseline_error_rate 
+            return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, baseline_num_errors 
         else:
-            reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_error_rate = self.data[self.idx_to_data[idx]]
+            reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, baseline_num_errors = self.data[self.idx_to_data[idx]]
         
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)
