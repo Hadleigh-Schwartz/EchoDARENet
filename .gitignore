@@ -4,4 +4,5 @@ lightning_logs/*
 *.png
 *.wav
 *.flac
-Datasets/*
+Datasets/
+events*

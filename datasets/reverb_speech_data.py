@@ -125,6 +125,7 @@ class DareDataset(Dataset):
             rir,
             pad_width=(0, np.max((0,self.rir_duration - len(rir)))), # 0-padding at end has no effect on reverb results so is ok
             )
+        
         if self.config["prealign_rir"]:
             rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
@@ -140,27 +141,42 @@ class DareDataset(Dataset):
             rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
             rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
             rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
-            print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
             if self.decoding == "autocepstrum":
                 num_errs_reverb = rev_num_errs_autocepstrum
             elif self.decoding == "cepstrum":
                 num_errs_reverb = rev_num_errs
         else:
             num_errs_reverb = 0
+
             
-
-
         # plt.plot(speech, label = "orig", alpha = 0.5)
         # plt.plot(reverb_speech, label = "reverb", alpha = 0.5)
         # plt.legend()
         # plt.savefig(f"speech_samps/plots/{idx}.png")
         # plt.clf()
 
-        # try normalizing, as rir is
-        speech = speech - np.mean(speech)
-        speech = speech / np.max(np.abs(speech))
-        reverb_speech = reverb_speech - np.mean(reverb_speech)
-        reverb_speech = reverb_speech / np.max(np.abs(reverb_speech))
+        if self.config["norm_audio"]:
+            speech = speech - np.mean(speech)
+            denom = np.max(np.abs(speech))
+            if denom != 0:
+                speech = speech / denom
+            else:
+                speech = np.zeros_like(speech)
+            reverb_speech = reverb_speech - np.mean(reverb_speech)
+            denom_reverb = np.max(np.abs(reverb_speech))
+            if denom_reverb != 0:
+                reverb_speech = reverb_speech / denom_reverb
+            else:
+                reverb_speech = np.zeros_like(reverb_speech)
+         
+        # fig, ax = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
+        # ax[0].plot(speech, label = "orig", alpha = 0.5)
+        # ax[0].set_title("Original Speech")
+        # ax[1].plot(reverb_speech, label = "reverb", alpha = 0.5)
+        # ax[1].set_title("Reverberant Speech")
+        # plt.savefig(f"speech_samps/plots/{idx}.png")
+        # plt.clf()
 
         reverb_speech = np.pad(
             reverb_speech,
@@ -173,6 +189,16 @@ class DareDataset(Dataset):
             pad_width=(0, np.max((0,135141 - len(speech)))),
             )
         speech = speech[:135141]               # expected input size given 15 up, 5 down filters and 2sec output
+
+        # if np.max(reverb_speech) > 8 and np.min(reverb_speech) < -5:
+        #     print(idx, np.max(reverb_speech), np.min(reverb_speech))
+
+        # # check if reverb speech has any nones or infinities
+        # if np.any(np.isnan(reverb_speech)):
+        #     print(f"NaN found in reverb speech at index {idx}")
+        # if np.any(np.isinf(reverb_speech)):
+        #     print(f"Inf found in reverb speech at index {idx}")
+
         return reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb
 
     def get_dare_item(self, idx):
@@ -245,7 +271,7 @@ class DareDataset(Dataset):
             rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
             rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
             rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
-            print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
             if self.decoding == "autocepstrum":
                 num_errs_reverb = rev_num_errs_autocepstrum
             elif self.decoding == "cepstrum":
@@ -317,16 +343,28 @@ class DareDataset(Dataset):
     def __getitem__(self, idx):
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
             if self.model == 'Waveunet':
-                reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.get_wavenet_item(idx)
+                reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb = self.get_wavenet_item(idx)
             else:
                 reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.get_dare_item(idx)
             
             if self.data_in_ram:
-                self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb))
+                if self.model == 'Waveunet':
+                    self.data.append((reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb))
+                else:
+                    self.data.append((reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb))
                 self.idx_to_data[idx] = len(self.data) - 1
+            
         else:
-            reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
-        return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
+            if self.model == 'Waveunet':
+                reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
+               
+            else:
+                reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
+               
+        if self.model == "Waveunet":
+            return reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb
+        else:
+            return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
         
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)

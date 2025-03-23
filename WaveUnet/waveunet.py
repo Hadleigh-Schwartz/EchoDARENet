@@ -8,170 +8,10 @@ from WaveUnet.crop import centre_crop
 from WaveUnet.resample import Resample1d
 from WaveUnet.conv import ConvLayer
 
+from decoding import DecodingLoss
+
 import auraloss # for MR-STFT loss 
 import matplotlib.pyplot as plt # for diagnostics only
-
-import numpy as np
-import sys
-import os
-
-curr_dir = os.getcwd()
-echo_dir = curr_dir.split("EchoDARENet")[0] 
-sys.path.append(echo_dir)
-
-
-class DecodingLoss(nn.Module):
-    def __init__(self, delays, win_size, decoding, cutoff_freq, sample_rate, softargmax_beta=1e10):
-        super(DecodingLoss, self).__init__()
-        self.delays = delays
-        self.win_size = win_size
-        self.decoding = decoding
-        self.cutoff_freq = cutoff_freq
-        self.sample_rate = sample_rate
-        self.softargmax_beta = softargmax_beta
-
-    def forward(self, audio_batch, symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
-        """
-        TODO: check out these to make more efficient
-        https://discuss.pytorch.org/t/apply-a-function-similar-to-map-on-a-tensor/51088/5
-        https://pytorch.org/functorch/stable/generated/functorch.vmap.html
-
-        Parameters:
-            audio_batch : torch.Tensor (batch_size, 1, num_samples)
-                Batch of audio samples in time domain
-            symbols_batch : torch.Tensor (batch_size, num_symbols) 
-                Batch of groudn-truth symbols that were encoded onto the clean speech
-            num_errs_no_reverb_batch : torch.Tensor (batch_size)
-                Batch of number of errors when decoding the encoded clean speech (these can occur due to confounding peaks in speech 
-                cepstra and are independent of the reverb or network)
-            num_errs_reverb_batch : torch.Tensor (batch_size)
-                Batch of number of errors when decoding the encoded reverb speech 
-        """
-        tot_symbol_errs = 0 # total symbol errors (differentiable)
-        total_err_reduction = 0 # accrue total error reduction (differentiable)
-        num_symbols_per_audio = symbols_batch.shape[1]
-        max_audio_len = num_symbols_per_audio * self.win_size
-        for audio_idx in range(audio_batch.shape[0]):
-            audio = audio_batch[audio_idx, 0, :max_audio_len]
-            symbols = symbols_batch[audio_idx]
-            num_errs_no_reverb = num_errs_no_reverb_batch[audio_idx]
-            num_errs_reverb = num_errs_reverb_batch[audio_idx]
-            num_wins = audio.shape[0] // self.win_size
-            curr_audio_num_err_symbols = 0
-            pred_symbols = []
-            fig, axes = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
-            axes[0].plot(audio.cpu().numpy())
-            if self.cutoff_freq is not None: # high-pass filter the window 
-                audio = highpass_biquad(audio,  self.cutoff_freq , self.sample_rate) # FILTERING IS WRONG???
-            axes[1].plot(audio.cpu().numpy())
-            axes[1].set_title(f"Filtered Audio - {self.cutoff_freq} Hz cutoff")
-            plt.savefig(f"audio_{audio_idx}.png")
-            plt.close(fig)
-            
-            for i in range(num_wins):
-                win = audio[i * self.win_size: (i + 1) * self.win_size]
-
-                if self.decoding == "cepstrum":
-                    cepstrum = self.torch_get_cepstrum(win)
-                    cep_vals = cepstrum[self.delays]
-                    max_val = self.softargmax(cep_vals)
-                    cep_loss_val = torch.clamp(torch.abs(max_val - symbols[i]), min = 0, max = 1)
-                    curr_audio_num_err_symbols= curr_audio_num_err_symbols + cep_loss_val
-                    pred_symbols.append(int(max_val.item()))
-
-                    # # get actual decoded symbol (non-differentiable, for debug)
-                    # cep_vals_nondiff = cep_vals.clone()
-                    # cep_vals_nondiff = cep_vals_nondiff.detach().cpu().numpy()
-                    # max_val_nondiff = np.argmax(cep_vals_nondiff)
-                    # if max_val_nondiff != symbols[i]:
-                    #     tot_symbol_errors += 1 
-                else:
-                    autocepstrum = self.torch_get_autocepstrum(win)
-                    autocepstrum_vals  = autocepstrum[self.delays]
-                    max_autocepstrum_val  = self.softargmax(autocepstrum_vals )
-                    autocep_loss_val = torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
-                    curr_audio_num_err_symbols = curr_audio_num_err_symbols + autocep_loss_val
-                    pred_symbols.append(int(max_autocepstrum_val.item()))
-                    
-                    # autocep_vals_nondiff = autocepstrum_vals.clone()
-                    # autocep_vals_nondiff = autocep_vals_nondiff.detach().cpu().numpy()
-                    # max_autocepstrum_val_nondiff = np.argmax(autocep_vals_nondiff)
-                    # if max_autocepstrum_val_nondiff != symbols[i]:
-                    #     tot_symbol_errors += 1 
-                    
-            print(pred_symbols) 
-            print(symbols.detach().cpu().numpy().tolist())
-            print('-----------------')
-            tot_symbol_errs = tot_symbol_errs + curr_audio_num_err_symbols
-            curr_audio_err_reduction = ((num_errs_reverb - num_errs_no_reverb) - (curr_audio_num_err_symbols - num_errs_no_reverb)) / (num_errs_reverb - num_errs_no_reverb)
-            total_err_reduction = total_err_reduction + (1 - curr_audio_err_reduction)
-
-        symbol_err_rate = tot_symbol_errs / (audio_batch.shape[0] * num_symbols_per_audio)
-        avg_err_reduction = total_err_reduction / audio_batch.shape[0]
-        return symbol_err_rate, tot_symbol_errs, avg_err_reduction
-
-    def softargmax(self, x):
-        """
-        beta original 1e10
-        From StackOverflow user Lostefra
-        https://stackoverflow.com/questions/46926809/getting-around-tf-argmax-which-is-not-differentiable
-        """
-        x_range = torch.arange(x.shape[-1], dtype=x.dtype, device = x.device)
-        return torch.sum(torch.nn.functional.softmax(x*self.softargmax_beta, dim=-1) * x_range, dim=-1)
-
-
-    def autocorrelation_1d(self, signal):
-        """
-        Computes the autocorrelation of a 1D signal using PyTorch.
-
-        Args:
-            signal (torch.Tensor): A 1D tensor representing the input signal.
-
-        Returns:
-            torch.Tensor: A 1D tensor representing the autocorrelation of the signal.
-        """
-        signal_length = signal.size(0)
-        padded_signal = torch.nn.functional.pad(signal, (0, signal_length), mode='constant', value=0)
-        
-        # Reshape for convolution
-        signal_reshaped = signal.reshape(1, 1, -1)
-        padded_signal_reshaped = padded_signal.reshape(1, 1, -1)
-
-        # Perform convolution (which is equivalent to cross-correlation for autocorrelation)
-        autocorr = torch.nn.functional.conv1d(padded_signal_reshaped, signal_reshaped, padding=signal_length - 1)
-
-        return autocorr.squeeze()
-
-
-    def torch_get_cepstrum(self, signal):
-        """
-        Get the cepstrum of a signal in differentiable fashion using torch.
-
-        Parameters:
-            signal : torch.Tensor
-        """
-        fft = torch.fft.rfft(signal)
-        sqr_log_fft = torch.log(fft.abs() + 0.00001)
-        cepstrum = torch.fft.irfft(sqr_log_fft)
-
-        # sanity check to make sure torch implementation is correct
-        # test_fft = np.fft.fft(signal.numpy())
-        # test_sqr_log_fft = np.log(np.abs(test_fft) + 0.00001)
-        # test_cepstrum = np.fft.ifft(test_sqr_log_fft).real
-        # print(cepstrum)
-        # print(test_cepstrum)
-        # print(np.allclose(cepstrum.numpy(), test_cepstrum, atol=1e-3))
-        # print("---------------")
-        return cepstrum
-
-    def torch_get_autocepstrum(self, signal):
-        """
-        Get the autocepstrum of a signal in differentiable fashion using torch.
-        """
-        autocorr = self.autocorrelation_1d(signal)
-        cep_autocorr = torch.fft.ifft(torch.log(torch.abs(torch.fft.fft(autocorr)) + 0.00001)).real
-        return cep_autocorr
-
 
 class UpsamplingBlock(nn.Module):
     def __init__(self, n_inputs, n_shortcut, n_outputs, kernel_size, stride, depth, conv_type, res):
@@ -287,10 +127,15 @@ class Waveunet(pl.LightningModule):
         if config is not None:
             if config["echo_encode"] == False:
                 raise Exception("Currently cannot use WaveUnet if config is not using echo encoding")
-            self.decoding_loss = DecodingLoss(config["Encoding"]["delays"], config["Encoding"]["win_size"], config["Encoding"]["decoding"], config["Encoding"]["cutoff_freq"], config["sample_rate"])
         else:
-            raise Exception("Need config to decode")
-
+                raise Exception("Need config to decode")
+            
+        # self.norm_audio = config["norm_audio"]
+        self.alpha = config["WaveUnet"]["alpha"]
+        self.soft_beta = config["WaveUnet"]["soft_beta"]
+        self.decoding_loss = DecodingLoss(config["Encoding"]["delays"], config["Encoding"]["win_size"], config["Encoding"]["decoding"], config["Encoding"]["cutoff_freq"], config["sample_rate"], 
+                                          softargmax_beta=self.soft_beta)
+        
 
         self.name = "Waveunet"
         self.num_levels = len(num_channels)
@@ -420,14 +265,7 @@ class Waveunet(pl.LightningModule):
 
     def forward(self, x, inst=None):
         curr_input_size = x.shape[-1]
-        #print("********************")
-        #print("input shape = " + str(x.shape))
-        #print("curr_input_size = " + str(curr_input_size))
-        #print("self.input_size = " + str(self.input_size))
-        #print("self.output_size = " + str(self.output_size))
-        #print("********************")
         assert(curr_input_size == self.input_size) # User promises to feed the proper input himself, to get the pre-calculated (NOT the originally desired) output size
-
         if self.separate:
             return {inst : self.forward_module(x, self.waveunets[inst])}
         else:
@@ -448,21 +286,27 @@ class Waveunet(pl.LightningModule):
         z = z[:, None, :].float()
 
         out  = self.forward(x)
-    
+        # if self.norm_audio:
+        #     gen_speech  = out["speech"]
+        #     gen_speech = gen_speech - torch.mean(gen_speech)
+        #     gen_speech = gen_speech / torch.max(torch.abs(gen_speech))
+        # else:
+        #     gen_speech  = out["speech"]
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
-        err_rate, tot_symbol_errors = self.torch_decode(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
-        dec_loss =  err_rate
-        dec_symbol_errors = tot_symbol_errors
-
-        loss = dec_loss * 0.05 +  speechMSEloss * 0.95
+        symbol_err_rate, tot_symbol_errs, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
+ 
+        loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
            
         if batch_idx % 100 == 0:
             self.plot(x, y, z, out, "Train")
             
         self.log("train_loss", loss )
-        self.log("train_decodeloss", dec_loss)
-        self.log("train_decsymbolerrors", dec_symbol_errors)
+        self.log("train_avg_err_reduction", avg_err_reduction)
+        self.log("train_symbol_error_rate", symbol_err_rate)
+        self.log("train_total_symbol_errors", tot_symbol_errs)
         self.log("train_speechMSEloss", speechMSEloss)
+        self.log("train_gt_symbol_error_rate_no_reverb", gt_symbol_err_rate_no_reverb)
+        self.log("train_gt_symbol_error_rate_reverb", gt_symbol_err_rate_reverb)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -477,16 +321,19 @@ class Waveunet(pl.LightningModule):
 
         out  = self.forward(x)
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
-        err_rate,  tot_symbol_errors = self.torch_decode(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
-        dec_loss =  err_rate
-        dec_symbol_errors = tot_symbol_errors
-        loss = dec_loss * 0.05  +  speechMSEloss * 0.95
+        symbol_err_rate, tot_symbol_errs, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
+        
+        loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
 
         self.plot(x, y, z, out, "Val")
            
-        self.log("val_loss", loss)
-        self.log("val_speechMSEloss", speechMSEloss )
-        self.log("val_decodeloss", loss)
+        self.log("val_loss", loss )
+        self.log("val_avg_err_reduction", avg_err_reduction)
+        self.log("val_symbol_error_rate", symbol_err_rate)
+        self.log("val_total_symbol_errors", tot_symbol_errs)
+        self.log("val_speechMSEloss", speechMSEloss)
+        self.log("val_gt_symbol_error_rate_no_reverb", gt_symbol_err_rate_no_reverb)
+        self.log("val_gt_symbol_error_rate_reverb", gt_symbol_err_rate_reverb)
 
         return loss
 
@@ -524,19 +371,13 @@ class Waveunet(pl.LightningModule):
         fh = plt.figure()
         x = centre_crop(x, out["speech"])
         y = centre_crop(y, out["speech"])
-        fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1, 5)
-        fig.set_size_inches(24, 4.8)
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, tight_layout=True)
         ax1.plot(x[0,0,:].cpu().squeeze().detach().numpy())
         ax2.plot(y[0,0,:].cpu().squeeze().detach().numpy())
-        ax3.plot(z[0,0,:].cpu().squeeze().detach().numpy())
-        ax4.plot(out["speech"][0,0,:].cpu().squeeze().detach().numpy())
-        ax5.plot(out["rir"][0,0,:].cpu().squeeze().detach().numpy())
+        ax3.plot(out["speech"][0,0,:].cpu().squeeze().detach().numpy())
         ax1.title.set_text("Cropped Reverb Speech")
         ax2.title.set_text("Cropped Clean Speech")
-        ax3.title.set_text("GT RIR")
-        ax4.title.set_text("Predicted Clean Speech")
-        ax5.title.set_text("Predicted RIR")
-        ax3.set_xlim(3100, 3300)
+        ax3.title.set_text("Predicted Clean Speech")
         tb = self.logger.experiment
         tb.add_figure(log_title, fig, global_step=self.global_step)
         plt.close()

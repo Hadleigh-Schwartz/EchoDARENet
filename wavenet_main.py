@@ -74,8 +74,9 @@ def main(args):
 
     trainer.fit(
         model      = model,
-        datamodule = datamodule
-        )
+        datamodule = datamodule, 
+        ckpt_path  = args.ckpt_path
+    )
 
     # ===========================================================
     # PyTorch Lightning Test
@@ -92,6 +93,8 @@ if __name__ == "__main__":
     
     parser.add_argument("--config_path", type=str, default="config.yaml", 
         help="A full or relative path to a configuration yaml file. (default: config.yaml)")
+    parser.add_argument("--ckpt_path", type=str, default=None,
+        help="A full or relative path to a checkpoint file. (default: None)")
         
     args = parser.parse_args()
     main(args)
