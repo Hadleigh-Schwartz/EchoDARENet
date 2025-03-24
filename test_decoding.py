@@ -11,6 +11,7 @@ import torch
 from decoding import DecodingLoss
 
 # append echo encoding parent dir to path
+import time
 import sys
 import os
 curr_dir = os.getcwd()
@@ -229,13 +230,23 @@ def test_decoding_loss2():
     num_errs_reverb_batch = torch.tensor(num_errs_reverb, dtype = torch.float32).unsqueeze(0)
 
     # duplicate each tensor along batch dimension
-    room_tradl_encoded_tensor = room_tradl_encoded_tensor.repeat(2, 1, 1)
-    symbols = symbols.repeat(2, 1)
-    num_errs_no_reverb_batch = num_errs_no_reverb_batch.repeat(2)
-    num_errs_reverb_batch = num_errs_reverb_batch.repeat(2)
+    test_batch_size = 8
+    room_tradl_encoded_tensor = room_tradl_encoded_tensor.repeat(test_batch_size, 1, 1)
+    symbols = symbols.repeat(test_batch_size, 1)
+    num_errs_no_reverb_batch = num_errs_no_reverb_batch.repeat(test_batch_size)
+    num_errs_reverb_batch = num_errs_reverb_batch.repeat(test_batch_size)
     print(room_tradl_encoded_tensor.shape, symbols.shape, num_errs_no_reverb_batch.shape, num_errs_reverb_batch.shape)
 
     # do a forward pass through the decoding loss
+
+    fast_start = time.time()
+    decoding_loss.efficient_forward(room_tradl_encoded_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
+    fast_end = time.time()
+    print(f"Efficient forward pass time: {fast_end - fast_start}")
+
+    slow_start = time.time()
     decoding_loss(room_tradl_encoded_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
+    slow_end = time.time()
+    print(f"Slow forward pass time: {slow_end - slow_start}")
 
 test_decoding_loss2()
