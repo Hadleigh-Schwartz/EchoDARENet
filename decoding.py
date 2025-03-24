@@ -47,32 +47,41 @@ class DecodingLoss(nn.Module):
             return autocep_decoded
     
 
-    def efficient_forward(self, audio_batch, symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
+    def efficient_forward(self, audio_batch, gt_symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
      
         num_wins = audio_batch.shape[2] // self.win_size
         max_audio_len = num_wins * self.win_size
 
-        # chop up audio into audio_batch.shape[2] // win_size windows
+        # chop up audio into audio_batch.shape[2] // win_size windows organized along batch dimension
         audio_batch = audio_batch.squeeze(1) # (batch_size, 1, num_samples) -> (batch_size, num_samples)
         audio_batch = audio_batch[:, :max_audio_len] # preemptively cut so all splis will be equal
         res = torch.tensor_split(audio_batch, num_wins, dim=1) # (batch_size, num_samples) -> tuple of  num_wins tensors of shape (batch_size, win_size)
         audio_batch = torch.stack(res, dim=1) # tuple-> (batch_size, num_wins, win_size)
-
-        # make one (batch_size * num_wins, win_size) i.e., (audio_batch.shape[0] * (audio_batch.shape[2] // win_size windows), win_size), tensor  X of audio windows
         all_windows = audio_batch.reshape(audio_batch.shape[0] * audio_batch.shape[1], self.win_size) # (batch_size, num_wins, win_size) -> (batch_size * num_wins, win_size)
         
-        # call torch.vmap on X to get a tensor Y of shape (batch_size * num_wins, 1) of symbols
-        all_symbols = torch.vmap(self.compute_symbol)(all_windows) # apply compute_symbol to each window in all_windows
-
-        # reshape Y into (batch_size, num_wins)
-        # reshape symbols_batch into (batch_size * num_wins, 1)
-        all_gt_symbols = symbols_batch.reshape(-1) # (batch_size, num_symbols) -> (batch_size * num_wins)
- 
-        # compute avg error rate of all symbols and all_gt_symbols
+        # compute symbols for all windows 
+        all_pred_symbols = torch.vmap(self.compute_symbol)(all_windows) # apply compute_symbol to each window in all_windows
+  
+        # compute avg error rate
+        all_gt_symbols = gt_symbols_batch.reshape(-1) # (batch_size, num_symbols) -> (batch_size * num_wins)
         accuracy = Accuracy(task="multiclass", num_classes=len(self.delays))
-        sym_err_rate = 1 - accuracy(all_symbols, all_gt_symbols) 
+        sym_err_rate = 1 - accuracy(all_pred_symbols, all_gt_symbols) 
 
-        print("Fast", sym_err_rate)
+        # compute err reduction loss, defined as the current number of errors per audio sample in the batch 
+        # divided by the number of errors per input reverberant audio sample, normed by the num errs in the non-reverb audio, 
+        # as those errors are "inevitable" and unrelated to the reverb 
+        all_pred_symbols = all_pred_symbols.reshape(audio_batch.shape[0], num_wins) # (batch_size * num_wins, 1) -> (batch_size, num_wins)
+        samplewise_accuracy = Accuracy(task="multiclass", num_classes=len(self.delays), multidim_average='samplewise')  
+        num_err_per_samp = (1 - samplewise_accuracy(all_pred_symbols, gt_symbols_batch)) * num_wins
+        norm_num_err_per_samp_premodel = torch.clamp(num_errs_reverb_batch - num_errs_no_reverb_batch, min = 1)
+        err_reduction_loss_per_samp = torch.clamp(num_err_per_samp - num_errs_no_reverb_batch, min = 0) / norm_num_err_per_samp_premodel
+        avg_err_reduction_loss = torch.mean(err_reduction_loss_per_samp)
+
+        # compute ground truth symbol error rate for reverb and non-reverb, for logging purposes
+        no_reverb_sym_err_rate = torch.sum(num_errs_no_reverb_batch) / (audio_batch.shape[0] * num_wins)
+        reverb_sym_err_rate = torch.sum(num_errs_reverb_batch) / (audio_batch.shape[0] * num_wins)
+
+        print("Fast", sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate)
 
     def forward(self, audio_batch, symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
         """
@@ -146,7 +155,7 @@ class DecodingLoss(nn.Module):
         gt_symbol_err_rate_no_reverb = gt_symbol_err_rate_no_reverb / (audio_batch.shape[0] * num_wins)
         gt_symbol_err_rate_reverb = gt_symbol_err_rate_reverb / (audio_batch.shape[0] * num_wins)
         
-        print("Forward", sym_err_rate)
+        print("Forward", sym_err_rate, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb)
         return sym_err_rate, tot_sym_err, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb
 
     def softargmax(self, x):

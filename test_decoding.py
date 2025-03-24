@@ -212,7 +212,7 @@ def test_decoding_loss2():
     post_simulated_tradtl_decoded, post_simulated_tradtl_decoded_autocepstrum = decode(room_tradtl_encoded, delays, win_size, SR, cutoff_freq = cutoff_freq, plot = False, gt = symbols)
     post_simulated_tradtl_err = np.sum(np.array(post_simulated_tradtl_decoded[:len(symbols)]) != np.array(symbols))
     post_simulated_tradtl_err_autocepstrum = np.sum(np.array(post_simulated_tradtl_decoded_autocepstrum[:len(symbols)]) != np.array(symbols))
-    # print(f"Tradtl enc - Total errors cepstrum after simulation: {post_simulated_tradtl_err}/{len(symbols)}. Total errors autocepstrum after simulation: {post_simulated_tradtl_err_autocepstrum}/{len(symbols)}.")
+    print(f"Tradtl enc - Total errors cepstrum after simulation: {post_simulated_tradtl_err}/{len(symbols)}. Total errors autocepstrum after simulation: {post_simulated_tradtl_err_autocepstrum}/{len(symbols)}.")
     if decoding == "autocepstrum":
         num_errs_reverb = post_simulated_tradtl_err_autocepstrum 
     else:
