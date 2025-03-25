@@ -34,10 +34,12 @@ class DareDataset(Dataset):
         
         self.samplerate = self.config['sample_rate']
         assert self.samplerate == self.speech_dataset[0][1] 
-
+     
+        self.same_batch_rir = self.config['same_batch_rir']
+        if self.same_batch_rir:
+            self.batch_size = self.config['DataLoader']['batch_size'] # need to know this so we can fix the RIR indices per batch using only idx
         self.rir_duration = config['rir_duration']
         self.rir_sos = signal.butter(6, 40, 'hp', fs=self.samplerate, output='sos') # Seems that this is largely for denoising the RIRs??
-
 
         self.data_in_ram = config['data_in_ram']
         if self.data_in_ram:
@@ -126,8 +128,12 @@ class DareDataset(Dataset):
         """
         Original Dare datalaoder with echo encoding added
         """
+        print(idx)
         idx_speech = idx % len(self.speech_dataset)
-        idx_rir    = idx % len(self.rir_dataset)
+        if self.same_batch_rir:
+            idx_rir = (idx // self.batch_size) % len(self.rir_dataset)
+        else:
+            idx_rir    = idx % len(self.rir_dataset)
 
         speech = self.speech_dataset[idx_speech][0].flatten()
 

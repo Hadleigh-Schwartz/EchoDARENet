@@ -7,10 +7,11 @@ import torchaudio as ta
 from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 from decoding import CepstralDomainDecodingLoss
 
-def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0], softargmax_beta = 100000, residual = False,
+def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0, 0], softargmax_beta = 100000, residual = False,
              delays = None, win_size = None, cutoff_freq = None, sample_rate = None):
     if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
                                                                     use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta, residual = False,
@@ -23,7 +24,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         learning_rate=1e-3,
         nwins=16,
         use_transformer=True, 
-        alphas = [0, 0, 0, 0],
+        alphas = [0, 0, 0, 0, 0],
         softargmax_beta = 100000,
         residual = False,
         delays = None,
@@ -116,8 +117,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
     
         return out1Out, d4Out_2
     
-
-
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
@@ -128,10 +127,17 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
         y_hat, ys_hat = self.predict(x.float())
 
-        loss1 = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
-        loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
+        if batch_idx % 200 == 0:
+            plot = True
+        else:
+            plot = False
+
+        rir_losses = self.compute_rir_loss(y, yt, y_hat, plot = plot, loss_type = loss_type) # the RIR prediction branch
+        avg_diff = rir_losses[-1]
+        loss1 = rir_losses[self.loss_ind]
+        loss2 = self.compute_speech_loss(ys, ys_hat) # the speech prediction branch
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss
+        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss + self.alphas[4] * avg_diff
         
         self.log(loss_type+"_cep_mse_loss", loss2, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
@@ -139,38 +145,28 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
+        self.log(loss_type+"_rir_avg_diff", avg_diff, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
-        if batch_idx % 200 == 0:
-            fh = plt.figure()
-            fig, axes = plt.subplots(3, 4, figsize=(12, 5), tight_layout=True)
-            batch_el = np.random.randint(0, x.shape[0])
-            window_start = np.random.randint(0, len(symbols[0])-4)
-            for i in range(window_start, window_start+4):
-                axes[0, i - window_start].plot(x[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
-                axes[0, i - window_start].set_title(f"Input cepstrum - Samp {batch_el} Win{i}")
-                axes[1, i - window_start].plot(ys[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
-                axes[1, i - window_start].set_title(f"Clean cepstrum - Samp {batch_el} Win{i}")
-                axes[2, i - window_start].plot(ys_hat[batch_el, 0,  self.delays[0] - 10:self.delays[-1] + 50, i].detach().cpu().numpy()) 
-                axes[2, i - window_start].set_title(f"Pred. cepstrum - Samp {batch_el} Win{i}")
-            
-            tb = self.logger.experiment
-            tb.add_figure('Fig1', fig, global_step=self.global_step)
-            plt.close()
+      
+        if plot:
+            self.make_cepstra_plot(x, ys, ys_hat, symbols)
             
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
-        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch 
         
         x = x.float()
         y = y.float()
         y_hat, ys_hat = self.predict(x.float())
 
-        loss1 = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
-        loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
+        rir_losses = self.compute_rir_loss(y, yt, y_hat, plot = True, loss_type = loss_type) # the RIR prediction branch
+        avg_diff = rir_losses[-1]
+        loss1 = rir_losses[self.loss_ind]
+        loss2 = self.compute_speech_loss(ys,ys_hat)
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss
+        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss + self.alphas[4] * avg_diff
         
         self.log(loss_type+"cep_mse_loss", loss2, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
@@ -178,20 +174,19 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
+        self.log(loss_type+"_rir_avg_diff", avg_diff, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
         
-        # self.make_plot(batch_idx, x, y, y_hat, losses[-1], ytfn)
-
-        # self.weight_histograms()
+        self.make_cepstra_plot(x, ys, ys_hat, symbols, loss_type)
 
         return loss
 
     def test_step(self, batch, batch_idx):
         loss_type = "test"
         # TODO
-        return loss
+        # return loss
 
-    def compute_speech_loss(self, batch_idx, y, yt, y_predict, type):
+    def compute_speech_loss(self, y, y_predict):
         """
         Compute all loss functions potentially incorporated during training.
         Inputs can be of speech or RIR.
@@ -231,8 +226,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         
         return mse_abs
         
-
-    def compute_losses(self, batch_idx, y, yt, y_predict, type):
+    def compute_rir_loss(self, y, yt, y_predict, plot = False, loss_type = "train"):
         """
         Compute all loss functions potentially incorporated during training.
         Inputs can be of speech or RIR.
@@ -244,7 +238,9 @@ class EchoSpeechDAREUnet(pl.LightningModule):
                 ground-truth time-domain representation (RIR or speech)
             y_predict:  
                 predicted frequency-domain representation (RIR or speech)
-            type: str 
+            plot: bool
+                whether to plot the RIR
+            loss_type: str
                 "train", "val", or "test"
             
         Returns:
@@ -253,79 +249,52 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         n_rir_gt = y.shape[2]
         n_rir_pred = y_predict.shape[2]
         y_c = y[:,0,::n_rir_gt//n_rir_pred,:].float() + 1j*y[:,1,::n_rir_gt//n_rir_pred,:].float()
+        
         y_hat_c = y_predict[:,0,:,:] + 1j*y_predict[:,1,:,:]
-        if yt is None:
-            y_c = y
-            y_hat_c = y_predict
-        
-        if yt is None:
-            ls = "_sp" #ls -> loss_suffix
-        else:
-            ls = ""
+        y_hat_c_t = t.fft.irfft(y_hat_c,n=yt.shape[1], dim=1).squeeze() # reverse predicted frequency-domain representation to time-domain
 
+        target_rir_portion = y_hat_c_t[:,self.delays[-1] + 10:]
+        # https://discuss.pytorch.org/t/how-to-calculate-pair-wise-differences-between-two-tensors-in-a-vectorized-way/37451
+        tensor_a = target_rir_portion.unsqueeze(0)
+        tensor_b = target_rir_portion.unsqueeze(1)
+        squared_diff = (tensor_a - tensor_b) ** 2
+        squared_diff = torch.mean(squared_diff, dim=2)
+        # take half of the matrix as the other half is symmetric
+        squared_diff = squared_diff.triu(diagonal=1)
+        # compute 8 choose 2
+        N = math.comb(target_rir_portion.shape[0], 2)
+        avg_diff = torch.sum(squared_diff) /  N
+        # print(squared_diff[1, 0], torch.mean((target_rir_portion[0, :] - target_rir_portion[1, :]) ** 2))
+        # print(squared_diff[0, 1], torch.mean((target_rir_portion[1, :] - target_rir_portion[0, :]) ** 2))
+        # print(squared_diff[2, 3], torch.mean((target_rir_portion[2, :] - target_rir_portion[3, :]) ** 2))
+        # print(squared_diff[3, 2], torch.mean((target_rir_portion[2, :] - target_rir_portion[3, :]) ** 2))
+
+        mse_time = nn.functional.mse_loss(y_hat_c_t, yt)
+        err_time = nn.functional.l1_loss(y_hat_c_t, yt)
+        y_hat_c_t_abs_log = (y_hat_c_t.abs()+self.eps).log()
+        yt_abs_log = (yt.abs()+self.eps).log()
+        mse_time_abs_log = nn.functional.mse_loss(y_hat_c_t_abs_log, yt_abs_log)
+        err_time_abs_log = nn.functional.l1_loss(y_hat_c_t_abs_log, yt_abs_log)
+        kld_time_abs_log = nn.functional.kl_div(y_hat_c_t_abs_log,yt_abs_log,log_target=True).abs()
+
+        err_timedelay = t.mean(t.log(t.abs(t.argmax(y_hat_c_t,dim=1) - t.argmax(yt))+1))
+        err_peak = 0.5*t.mean(t.abs(t.argmax(y_hat_c_t, dim = 1) - t.argmax(yt))/yt.shape[1] \
+            + 0.5*t.abs(t.max(y_hat_c_t,dim=1)[0] - t.max(yt)))
+        err_peakval = t.mean(t.abs(y_hat_c_t[:,t.argmax(yt)] - t.max(yt)))
     
-        if yt is not None:
-            y_hat_c_t = t.fft.irfft(y_hat_c,n=yt.shape[1],dim=1).squeeze() # reverse predicted frequency-domain representation to time-domain
-            # print(f"Non speech case. y shape: {y.shape}, yt shape: {yt.shape}, y_predict shape: {y_predict.shape}, y_c shape: {y_c.shape}, y_hat_c shape: {y_hat_c.shape}")
-            # print(f"y_hat_c_t shape: {y_hat_c_t.shape} and type: {y_hat_c_t.dtype}. yt type: {yt.dtype}")
-            mse_time = nn.functional.mse_loss(y_hat_c_t, yt)
-            err_time = nn.functional.l1_loss(y_hat_c_t, yt)
-            y_hat_c_t_abs_log = (y_hat_c_t.abs()+self.eps).log()
-            yt_abs_log = (yt.abs()+self.eps).log()
-            mse_time_abs_log = nn.functional.mse_loss(y_hat_c_t_abs_log, yt_abs_log)
-            err_time_abs_log = nn.functional.l1_loss(y_hat_c_t_abs_log, yt_abs_log)
-            kld_time_abs_log = nn.functional.kl_div(y_hat_c_t_abs_log,yt_abs_log,log_target=True).abs()
-
-            err_timedelay = t.mean(t.log(t.abs(t.argmax(y_hat_c_t,dim=1) - t.argmax(yt))+1))
-            err_peak = 0.5*t.mean(t.abs(t.argmax(y_hat_c_t, dim = 1) - t.argmax(yt))/yt.shape[1] \
-                + 0.5*t.abs(t.max(y_hat_c_t,dim=1)[0] - t.max(yt)))
-            err_peakval = t.mean(t.abs(y_hat_c_t[:,t.argmax(yt)] - t.max(yt)))
+        mse_real = nn.functional.mse_loss(t.real(y_hat_c),t.real(y_c))
+        mse_imag = nn.functional.mse_loss(t.imag(y_hat_c),t.imag(y_c))
+        mse_abs = nn.functional.mse_loss(t.log(t.abs(y_hat_c)),t.log(t.abs(y_c)))
         
-            mse_real = nn.functional.mse_loss(t.real(y_hat_c),t.real(y_c))
-            mse_imag = nn.functional.mse_loss(t.imag(y_hat_c),t.imag(y_c))
-            mse_abs = nn.functional.mse_loss(t.log(t.abs(y_hat_c)),t.log(t.abs(y_c)))
-            
-            err_real = nn.functional.l1_loss(t.real(y_hat_c),t.real(y_c))
-            err_imag = nn.functional.l1_loss(t.imag(y_hat_c),t.imag(y_c))
-            err_abs = nn.functional.l1_loss(t.log(t.abs(y_hat_c)),t.log(t.abs(y_c)))
-        
-        else:
-            err_time=None
-            err_time_abs_log=None
-            mse_time=None
-            mse_time_abs_log=None
-            kld_time_abs_log=None
-            err_timedelay=None
-            err_peak=None
-            err_peakval=None
-
-            mse_real = None
-            mse_imag = None
-            mse_abs = None
-            
-            err_real = None
-            err_imag = None
-            err_abs = None
-
-        if yt is None:
-            mse_abs = nn.functional.mse_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
-            err_abs = nn.functional.l1_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
-
+        err_real = nn.functional.l1_loss(t.real(y_hat_c),t.real(y_c))
+        err_imag = nn.functional.l1_loss(t.imag(y_hat_c),t.imag(y_c))
+        err_abs = nn.functional.l1_loss(t.log(t.abs(y_hat_c)),t.log(t.abs(y_c)))
      
         y1 = t.sin(t.angle(y_c))
         y2 = t.cos(t.angle(y_c))
         y_hat1 = t.sin(t.angle(y_hat_c))
         y_hat2 = t.cos(t.angle(y_hat_c))
         
-        if yt is None:
-            mse_abs = nn.functional.mse_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
-            err_abs = nn.functional.l1_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
-            y1 = t.sin(y_c[:,1,:,:])
-            y2 = t.cos(y_c[:,1,:,:])
-            y_hat1 = t.sin(y_hat_c[:,1,:,:])
-            y_hat2 = t.cos(y_hat_c[:,1,:,:])
-
-        # err_phase = t.sum(t.abs(y_c)/t.sum(t.abs(y_c)) * t.abs(t.angle(y_c)-t.angle(y_hat_c)))
         mse_phase = nn.functional.mse_loss(y1,y_hat1) + nn.functional.mse_loss(y2,y_hat2)
         err_phase = nn.functional.l1_loss(y1,y_hat1) + nn.functional.l1_loss(y2,y_hat2)
         y_a = t.tensor(np.unwrap(t.angle(y_c).cpu().detach().numpy(),axis=1)).to(self.device)
@@ -337,139 +306,58 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss_err = err_abs + err_phase # + err_peakval # + err_timedelay #+ err_phase_un * 1e-4
         loss_mse = mse_abs + mse_phase # + err_peakval # + err_timedelay #+ mse_phase_un * 1e-4
 
-        # self.log(type+"_loss_err"+ls, loss_err, sync_dist=True )
-        # self.log(type+"_loss_mse"+ls, loss_mse, sync_dist=True )
-        # self.log(type+"_err_phase"+ls,err_phase, sync_dist=True)
-        # self.log(type+"_err_phase_un"+ls,err_phase_un, sync_dist=True)
-        # self.log(type+"_err_abs"+ls,  err_abs, sync_dist=True )
-        # self.log(type+"_err_abs_mel"+ls,  err_abs_mel, sync_dist=True )
-        # self.log(type+"_mse_phase"+ls, mse_phase, sync_dist=True )
-        # self.log(type+"_mse_phase_un"+ls, mse_phase_un, sync_dist=True )
-        # self.log(type+"_mse_abs"+ls, mse_abs, sync_dist=True )
-        # self.log(type+"_mse_abs_mel"+ls, mse_abs_mel, sync_dist=True )
-        # if yt is not None:
-        #     self.log(type+"_err_real"+ls, err_real, sync_dist=True )
-        #     self.log(type+"_err_imag"+ls, err_imag, sync_dist=True )
-        #     self.log(type+"_mse_real"+ls, mse_real, sync_dist=True )
-        #     self.log(type+"_mse_imag"+ls, mse_imag, sync_dist=True )
-        #     self.log(type+"_err_time", err_time, sync_dist=True )
-        #     self.log(type+"_err_time_abs_log", err_time_abs_log, sync_dist=True )
-        #     self.log(type+"_mse_time", mse_time, sync_dist=True )
-        #     self.log(type+"_mse_time_abs_log", mse_time_abs_log, sync_dist=True )
-        #     self.log(type+"_kld_time_abs_log", kld_time_abs_log, sync_dist=True )
-        #     self.log(type+"_err_timedelay", err_timedelay, sync_dist=True )
-        #     self.log(type+"_err_peak", err_peak, sync_dist=True )
-        #     self.log(type+"_err_peakval", err_peakval, sync_dist=True )
+        if plot == True:
+            self.make_rir_plot(yt, y_hat_c_t, loss_type)
 
         return \
             loss_err, loss_mse, \
             err_real, err_imag, err_abs, None, err_phase, err_phase_un, err_time, err_time_abs_log, \
             mse_real, mse_imag, mse_abs, None, mse_phase, mse_phase_un, mse_time, mse_time_abs_log, \
             kld_time_abs_log, err_timedelay, err_peak, err_peakval, \
-            y_hat_c
-      
+            y_hat_c, avg_diff
+
+
+    def make_cepstra_plot(self, input_cepstra, clean_cepstra, pred_cepstra, symbols, loss_type = "train"):
+        fh = plt.figure()
+        fig, axes = plt.subplots(3, 4, figsize=(12, 5), tight_layout=True)
+        batch_el = np.random.randint(0, input_cepstra.shape[0])
+        window_start = np.random.randint(0, len(symbols[0])-4)
+        for i in range(window_start, window_start+4):
+            axes[0, i - window_start].plot(input_cepstra[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
+            axes[0, i - window_start].set_title(f"Input cepstrum - Samp {batch_el} Win{i}")
+            axes[1, i - window_start].plot(clean_cepstra[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
+            axes[1, i - window_start].set_title(f"Clean cepstrum - Samp {batch_el} Win{i}")
+            axes[2, i - window_start].plot(pred_cepstra[batch_el, 0,  self.delays[0] - 10:self.delays[-1] + 50, i].detach().cpu().numpy()) 
+            axes[2, i - window_start].set_title(f"Pred. cepstrum - Samp {batch_el} Win{i}")
+        
+        tb = self.logger.experiment
+        tb.add_figure(loss_type + 'Cepstra', fig, global_step=self.global_step)
+        plt.close()
+
+    def make_rir_plot(self, gt_rir, pred_rir, loss_type = "train"):
+        fh = plt.figure()
+        fig, axes = plt.subplots(2, 4, figsize=(12, 5), tight_layout=True)
+        # randomly choose for samples from the batch
+        batch_els = np.random.randint(0, gt_rir.shape[0], 4)
+        for i, batch_el in enumerate(batch_els):
+            axes[0, i].plot(gt_rir[batch_el, :].detach().cpu().numpy(), alpha = 0.5, label = "gt")
+            axes[0, i].plot(pred_rir[batch_el, :].detach().cpu().numpy(), alpha = 0.5, label = "pred")
+            axes[0, i].set_title(f"RIR Samp {batch_el}")
+            axes[0, i].legend()
+
+            axes[1, i].plot(gt_rir[batch_el, :].detach().cpu().numpy(), alpha = 0.5, label = "gt")
+            axes[1, i].plot(pred_rir[batch_el, :].detach().cpu().numpy(), alpha = 0.5, label = "pred")
+            axes[1, i].set_xlim(0, 2000)
+            axes[1, i].set_title(f"(Zoomed in) RIR Samp {batch_el}")
+            axes[1, i].legend()
+        
+        tb = self.logger.experiment
+        tb.add_figure(loss_type + 'RIR', fig, global_step=self.global_step)
+        plt.close()
+
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
         scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
         return [optimizer], [scheduler]
 
-    def make_pred_speech_plot(self, batch_idx, gt_speech_fft, pred_speech_fft, gt_speech_time, pred_speech_time):
-        fh = plt.figure()
-        fig, axes = plt.subplots(2, 2, figsize=(6, 6), tight_layout=True)
-        # axes[0, 0].imshow(t.abs(gt_speech_fft[0, 0, :, :]).cpu().detach().numpy(), aspect='auto')
-        # axes[0, 0].set_title("GT Speech FFT Magnitude")
-        # axes[0, 1].imshow(t.abs(pred_speech_fft[0, 0, :, :]).cpu().detach().numpy(), aspect='auto')
-        # axes[0, 1].set_title("Predicted Speech FFT Magnitude")
-        axes[1, 0].plot(gt_speech_time[0, 0].cpu().detach().numpy())
-        axes[1, 0].set_title("GT Speech Time Domain")
-        axes[1, 1].plot(pred_speech_time[0, 0].cpu().detach().numpy())
-        axes[1, 1].set_title("Predicted Speech Time Domain")
-        tb = self.logger.experiment
-        tb.add_figure('Speech', fig, global_step=self.global_step)
-
-    def make_plot(self,batch_idx,x,y,y_hat,y_hat_c,ytfn):
-        if (batch_idx==0) and (self.device.index==0) and (torch.utils.data.get_worker_info() is None):
-            plt.rcParams.update({'font.size': 4})
-            plt.rcParams['axes.linewidth'] = 0.2
-            plt.rcParams["figure.dpi"] = 1200
-
-            fh = plt.figure()
-            fig, ((ax1, ax2, ax3),(ax4, ax5, ax6),(ax7,ax8,ax9)) = plt.subplots(3, 3)
-            a = x.cpu().detach().numpy()
-            b = y.cpu().detach().numpy()
-            c = y_hat.cpu().detach().numpy()
-            
-            n_rir_gt = y.shape[2]
-            n_rir_pred = y_hat.shape[2]
-
-            y_c = y[0,0,::n_rir_gt//n_rir_pred,:].float() + 1j*y[0,1,::n_rir_gt//n_rir_pred,:].float()
-            x_a = np.unwrap(np.angle((a[0,0,:,:] + 1j*a[0,1,:,:])),axis=0)
-            y_a = np.angle(y_c.cpu().detach().numpy())
-            y_hat_a = np.angle(y_hat_c.cpu().detach().numpy())
-            
-            ax1.plot(x_a[:,0], linewidth=0.1, label="Input Unwrapped Phase")
-            ax2.plot(np.unwrap(y_hat_a[0,:,0],axis=0), linewidth=0.1, label="Predicted Unwrapped Phase")
-            ax2.plot(np.unwrap(y_a[:,0],axis=0), linewidth=0.1, label="Target Unwrapped Phase")
-            ax3.plot(y_hat_a[0,:,0], '.', markeredgecolor='none', markersize=0.5, label="Predicted Phase")
-            ax3.plot(y_a[:,0], '.', markeredgecolor='none', markersize=0.5, label="Target Phase")
-            ax1.set_title(ytfn[0])
-            ax1.legend(loc=2)
-            ax2.legend(loc=3)
-            ax3.legend(loc=4)
-            
-            ax4.plot(np.mean(10*np.log10(np.abs(a[0,0,:,:] + 1j*a[0,1,:,:])),axis=1), linewidth=0.1, label="Input Magnitude")
-            ax5.plot(10*np.log10(np.abs(b[0,0,:,0] + 1j*b[0,1,:,0])), linewidth=0.1, label="Target Magnitude")
-            ax6.plot(10*np.log10(np.abs(c[0,0,:,0] + 1j*c[0,1,:,0])), linewidth=0.1, label="Predicted Magnitude")
-            ax6.plot(10*np.log10(np.abs(y_c[:,0].cpu().detach().numpy())), linewidth=0.1, label="Target Magnitude")
-            ax4.legend(loc=8)
-            ax5.legend(loc=8)
-            ax6.legend(loc=8)
-
-            rir_est = np.fft.irfft(y_hat_c[0,:,:].cpu().squeeze().detach().numpy())
-            rir = np.fft.irfft(y_c.cpu().squeeze().detach().numpy())
-            ax7.plot(rir_est[rir_est.shape[0]//8:(rir_est.shape[0]//8)*3], linewidth=0.1, label="Predicted RIR 1/8 to 3/8")
-            ax7.plot(rir[rir_est.shape[0]//8:(rir_est.shape[0]//8)*3], linewidth=0.1, alpha=0.50, label="Target RIR 1/8 to 3/8")
-            ax8.plot(rir_est, linewidth=0.1, label="Predicted RIR")
-            ax8.plot(rir, linewidth=0.1, alpha=0.50, label="Target RIR")
-            ax9.plot(np.log(np.abs(rir_est)), linewidth=0.1, label="Predicted log(abs(RIR))")
-            ax9.plot(np.log(np.abs(rir)), linewidth=0.1, alpha=0.50, label="Target log(abs(RIR))")
-            ax7.legend(loc=2)
-            ax8.legend(loc=1)
-            ax9.legend(loc=3)
-
-            fig.savefig("./val_images/darenetv2_"+str(self.current_epoch)+".png",dpi=1200)
-            tb = self.logger.experiment
-            tb.add_figure('Fig1', fig, global_step=self.global_step)
-            plt.close()
-        return 0
     
-    def weight_histograms_conv2d(self, writer, step, weights, layer_number):
-        weights_shape = weights.shape
-        num_kernels = weights_shape[0]
-        for k in range(num_kernels):
-            flattened_weights = weights[k].flatten()
-            tag = f"layer_{layer_number}/kernel_{k}"
-            writer.add_histogram(tag, flattened_weights, global_step=step, bins='tensorflow')
-
-    def weight_histograms(self):
-        if torch.utils.data.get_worker_info() is None:
-            writer = self.logger.experiment
-            step = self.global_step
-            # Iterate over all model layers
-            layers = []
-            layers.append(self.conv1[0])
-            layers.append(self.conv2[0])
-            layers.append(self.conv3[0])
-            layers.append(self.conv4[0])
-            layers.append(self.deconv1[0])
-            layers.append(self.deconv2[0])
-            layers.append(self.deconv3[0])
-            layers.append(self.deconv4[0])
-            layers.append(self.out1[0])
-            
-            for layer_number in range(len(layers)):
-                layer = layers[layer_number]
-                # Compute weight histograms for appropriate layer
-                if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
-                    weights = layer.weight
-                    self.weight_histograms_conv2d(writer, step, weights, layer_number)
