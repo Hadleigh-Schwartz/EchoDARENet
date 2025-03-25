@@ -25,14 +25,7 @@ class DareDataset(Dataset):
         self.split_train_val_test_p = split_train_val_test_p
         self.device = device
 
-        self.config = config
-
-        # wavenet specific stuff
-        self.model  = config['Model']['model_name']
-        self.waveunet_input_samples  = 73721
-        self.waveunet_output_samples = 32777
-        ###################
-        
+        self.config = config        
         
         self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
         self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
@@ -43,13 +36,12 @@ class DareDataset(Dataset):
         self.stft_format_sp = self.config['stft_format_sp']
         self.eps = 10**-32
 
-        self.nfft = self.config['nfft']
-        self.nfrms = self.config['nfrms']
         self.samplerate = self.speech_dataset[0][1]
 
         self.rir_duration = config['rir_duration']
         self.rir_sos = signal.butter(6, 40, 'hp', fs=self.samplerate, output='sos') # Seems that this is largely for denoising the RIRs??
 
+        self.nfrms = config['nfrms']
         self.nhop = self.config['nhop']
         self.reverb_speech_duration = self.nfrms * self.nhop
 

@@ -10,8 +10,8 @@ import numpy as np
 
 from decoding import CepstralDomainDecodingLoss
 
-def getModel(model_name=None,learning_rate=1e-3,nfft=511,nfrms=16,use_transformer=False,use_speechbranch=False,alph=0):
-    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate=learning_rate,nfft=nfft,nfrms=nfrms,use_transformer=use_transformer,use_speechbranch=use_speechbranch,alph=alph)
+def getModel(model_name=None, learning_rate=1e-3, nfft=511, nfrms=16, use_transformer=False, alphas = [0, 0, 0, 0]):
+    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate=learning_rate,nfft=nfft,nfrms=nfrms,use_transformer=use_transformer, alphas = alphas)
     else: raise Exception("Unknown model name.")
     return model
 
@@ -22,8 +22,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         nhop=(2**15)/(2**6),
         nfrms=16,
         use_transformer=True, 
-        use_speechbranch=False,
-        alph=0):
+        alphas = [0, 0, 0, 0]):
         super().__init__()
         self.name = "EchoSpeechDAREUnet"
 
@@ -36,8 +35,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         # self.nhop = nhop
         self.nfrms = nfrms
         self.use_transformer = use_transformer
-        self.use_speechbranch = use_speechbranch
-        self.alph = alph
+        self.alphas = alphas
         self.win = t.hann_window(self.nfft)
         self.mel_transform = ta.transforms.MelScale(n_mels=128,n_stft=self.nfft)
         self.eps = 1e-16
@@ -68,20 +66,47 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
-        self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.ReLU())
+        self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # for symmetry with other block also change to Tanh
         
-        if self.use_speechbranch:
-            self.deconv1_2 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-            self.deconv2_2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
-            self.deconv3_2 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
-            self.deconv4_2 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.ReLU())
+        self.deconv1_2 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
+        self.deconv2_2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
+        self.deconv3_2 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
+        self.deconv4_2 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
         self.out1 = nn.Sequential(nn.Conv2d(2,   2, (1,self.nfrms), stride=1, padding=0), nn.Tanh())
 
+
+    def predict(self, x):
+        
+
+        c1Out = self.conv1(x)     # (64 x 64 x  64)
+        c2Out = self.conv2(c1Out) # (16 x 16 x 128)
+        c3Out = self.conv3(c2Out) # ( 4 x  4 x 256)
+        c4Out = self.conv4(c3Out) # ( 1 x  1 x 256)
+
+        if self.use_transformer:
+            c4Out = self.transformer(\
+                c4Out.squeeze().permute((0,2,1)), \
+                c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
+
+        d1Out = self.deconv1(c4Out) # (  4 x   4 x 256)
+        d2Out = self.deconv2(t.cat((d1Out, c3Out), dim=1)) # ( 16 x  16 x 128)
+        d3Out = self.deconv3(t.cat((d2Out, c2Out), dim=1)) # ( 64 x  64 x 128)
+        d4Out = self.deconv4(t.cat((d3Out, c1Out), dim=1)) # (256 x 256 x 1)
+        out1Out = self.out1(d4Out) # (256 x 256 x 1)
+
+        d1Out_2 = self.deconv1_2(c4Out) # (  4 x   4 x 256)
+        d2Out_2 = self.deconv2_2(t.cat((d1Out_2, c3Out), dim=1)) # ( 16 x  16 x 128)
+        d3Out_2 = self.deconv3_2(t.cat((d2Out_2, c2Out), dim=1)) # ( 64 x  64 x 128)
+        d4Out_2 = self.deconv4_2(t.cat((d3Out_2, c1Out), dim=1)) # (256 x 256 x 1)
+    
+        return out1Out, d4Out_2
+    
+
+
     def training_step(self, batch, batch_idx):
         loss_type = "train"
-        # training_step defines the train loop.
-        # it is independent of forward
+
         x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         ys = ys.float()
         x = x.float()
@@ -90,21 +115,20 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         y_hat, ys_hat = self.predict(x.float())
 
         loss1 = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
-        if self.use_speechbranch: # the clean speech prediction branch
-            loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
-            sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-            self.log(loss_type+"_cep_mse_loss", loss2, sync_dist = True )
-            self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-            self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
-            self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
-            self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-            loss = (1-self.alph) * loss1 + self.alph * loss2 + sym_err_rate * 0.5
+        loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
+        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
+        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss
+        
+        self.log(loss_type+"_cep_mse_loss", loss2, sync_dist = True )
+        self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
+        self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
-        if batch_idx % 100 == 0:
+        if batch_idx % 400 == 0:
             fh = plt.figure()
             fig, axes = plt.subplots(3, 4, figsize=(12, 5), tight_layout=True)
-            # randomly choose a batch elemement
             batch_el = np.random.randint(0, x.shape[0])
             window_start = np.random.randint(0, len(symbols[0])-4)
             for i in range(window_start, window_start+4):
@@ -123,24 +147,23 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
-        # training_step defines the train loop.
-        # it is independent of forward
         x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         
         x = x.float()
         y = y.float()
         y_hat, ys_hat = self.predict(x.float())
 
-        loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
-        if self.use_speechbranch: # the clean speech prediction branch
-            loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
-            sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-            self.log(loss_type+"cep_mse_loss", loss2, sync_dist = True )
-            self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-            self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
-            self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
-            self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-            loss = (1-self.alph) * loss + self.alph * loss2 + sym_err_rate * 0.5
+        loss1 = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
+        loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
+        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
+        loss = self.alphas[0] * loss1 + self.alphas[1] * loss2 + self.alphas[2] * sym_err_rate + self.alphas[3] * avg_err_reduction_loss
+        
+        self.log(loss_type+"cep_mse_loss", loss2, sync_dist = True )
+        self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
+        self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
         
         # self.make_plot(batch_idx, x, y, y_hat, losses[-1], ytfn)
@@ -151,48 +174,8 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         loss_type = "test"
-        # test_step defines the test loop.
-        # it is independent of forward
-        x, ys, ys_t, y, yt, _, symbols, baseline_error_rate = batch # reverberant speech, clean speech, waveform speech, RIR fft, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
-        x = x.float()
-        y = y.float()
-        y_hat, ys_hat = self.predict(x.float())
-
-        loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind]
-        if self.use_speechbranch:
-            loss2 = self.compute_losses(batch_idx, ys, None, ys_hat, loss_type)[self.loss_ind] 
-            loss = (1-self.alph) * loss + self.alph * loss2
-        # self.log("loss", {loss_type: loss })
-        self.log(loss_type+"_loss", loss, sync_dist = True)
+        # TODO
         return loss
-
-    def predict(self, x):
-        c1Out = self.conv1(x)     # (64 x 64 x  64)
-        c2Out = self.conv2(c1Out) # (16 x 16 x 128)
-        c3Out = self.conv3(c2Out) # ( 4 x  4 x 256)
-        c4Out = self.conv4(c3Out) # ( 1 x  1 x 256)
-
-        if self.use_transformer:
-            c4Out = self.transformer(\
-                c4Out.squeeze().permute((0,2,1)), \
-                c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
-
-        d1Out = self.deconv1(c4Out) # (  4 x   4 x 256)
-        d2Out = self.deconv2(t.cat((d1Out, c3Out), dim=1)) # ( 16 x  16 x 128)
-        d3Out = self.deconv3(t.cat((d2Out, c2Out), dim=1)) # ( 64 x  64 x 128)
-        d4Out = self.deconv4(t.cat((d3Out, c1Out), dim=1)) # (256 x 256 x 1)
-        out1Out = self.out1(d4Out) # (256 x 256 x 1)
-
-        if self.use_speechbranch:
-            d1Out_2 = self.deconv1_2(c4Out) # (  4 x   4 x 256)
-            d2Out_2 = self.deconv2_2(t.cat((d1Out_2, c3Out), dim=1)) # ( 16 x  16 x 128)
-            d3Out_2 = self.deconv3_2(t.cat((d2Out_2, c2Out), dim=1)) # ( 64 x  64 x 128)
-            d4Out_2 = self.deconv4_2(t.cat((d3Out_2, c1Out), dim=1)) # (256 x 256 x 1)
-        else:
-            d4Out_2 = None
-        
-        return out1Out, d4Out_2
-    
 
     def compute_speech_loss(self, batch_idx, y, yt, y_predict, type):
         """

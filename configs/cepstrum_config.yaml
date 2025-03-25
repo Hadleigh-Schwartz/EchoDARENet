@@ -10,7 +10,6 @@ nfrms: 16
 min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 echo_encode: True
 prealign_rir: False
-norm_audio : True
 
 data_in_ram: False
 
@@ -28,8 +27,7 @@ Model:
   nfft: 8192
   nfrms: 16
   use_transformer: True
-  use_speechbranch: True
-  alph: 0.99
+  alphas: [0.01, 0.99, 0.5, 0.0] # cepstrum MSE loss weight, RIR loss weight, symbol error rate weight
 
 DataLoader:
   batch_size: 8
@@ -60,25 +58,11 @@ Trainer:
   limit_val_batches: 3
   limit_test_batches: 111
   max_epochs: 100
-  # reload_dataloaders_every_n_epochs: 1
   num_sanity_val_steps: 1
   accumulate_grad_batches: 1
   log_every_n_steps: 50
   # val_check_interval: 1 # val every this fraction of an epoch
   check_val_every_n_epoch: 2
   accelerator: gpu
-  devices: [1]
+  devices: [0]
 
-# RichProgressBar:
-#   refresh_rate: 100
-#   leave: True
-
-# RichProgressBarTheme:
-#   description: green_yellow
-#   progress_bar: green1
-#   progress_bar_finished: green1
-#   progress_bar_pulse: '#6206E0'
-#   batch_progress: green_yellow
-#   time: grey82
-#   processing_speed: grey82
-#   metrics: grey82
