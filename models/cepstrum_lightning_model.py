@@ -10,10 +10,10 @@ import numpy as np
 
 from decoding import CepstralDomainDecodingLoss
 
-def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0], softargmax_beta = 100000,
+def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0], softargmax_beta = 100000, residual = False,
              delays = None, win_size = None, cutoff_freq = None, sample_rate = None):
     if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
-                                                                    use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta,
+                                                                    use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta, residual = False,
                                                                     delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate)    
     else: raise Exception("Unknown model name.")
     return model
@@ -25,6 +25,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         use_transformer=True, 
         alphas = [0, 0, 0, 0],
         softargmax_beta = 100000,
+        residual = False,
         delays = None,
         win_size = None,
         cutoff_freq = None,
@@ -37,11 +38,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.learning_rate = learning_rate
         self.lr_scheduler_gamma = 0.9
         self.loss_ind = 0
+
+        
       
         self.nwins = nwins
         self.use_transformer = use_transformer
         self.alphas = alphas
         self.eps = 1e-16
+        self.residual = residual
 
         self.delays = delays
         self.win_size = win_size
@@ -83,7 +87,8 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
 
     def predict(self, x):
-
+        if self.residual:
+            residual = x
 
         c1Out = self.conv1(x)     # (64 x 64 x  64)
         c2Out = self.conv2(c1Out) # (16 x 16 x 128)
@@ -105,6 +110,9 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         d2Out_2 = self.deconv2_2(t.cat((d1Out_2, c3Out), dim=1)) # ( 16 x  16 x 128)
         d3Out_2 = self.deconv3_2(t.cat((d2Out_2, c2Out), dim=1)) # ( 64 x  64 x 128)
         d4Out_2 = self.deconv4_2(t.cat((d3Out_2, c1Out), dim=1)) # (256 x 256 x 1)
+
+        if self.residual:
+            d4Out_2 = d4Out_2 + residual
     
         return out1Out, d4Out_2
     

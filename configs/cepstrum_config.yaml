@@ -25,6 +25,7 @@ Model:
   use_transformer: True
   alphas: [0.01, 0.99, 0.5, 0.0] # cepstrum MSE loss weight, RIR loss weight, symbol error rate weight
   softargmax_beta : 10000000
+  residual: True
 
 DataLoader:
   batch_size: 8
