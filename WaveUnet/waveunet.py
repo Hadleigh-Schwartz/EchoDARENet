@@ -293,7 +293,7 @@ class Waveunet(pl.LightningModule):
         # else:
         #     gen_speech  = out["speech"]
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
-        symbol_err_rate, tot_symbol_errs, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
+        symbol_err_rate, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
  
         loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
            
@@ -303,7 +303,6 @@ class Waveunet(pl.LightningModule):
         self.log("train_loss", loss )
         self.log("train_avg_err_reduction", avg_err_reduction)
         self.log("train_symbol_error_rate", symbol_err_rate)
-        self.log("train_total_symbol_errors", tot_symbol_errs)
         self.log("train_speechMSEloss", speechMSEloss)
         self.log("train_gt_symbol_error_rate_no_reverb", gt_symbol_err_rate_no_reverb)
         self.log("train_gt_symbol_error_rate_reverb", gt_symbol_err_rate_reverb)
@@ -321,7 +320,7 @@ class Waveunet(pl.LightningModule):
 
         out  = self.forward(x)
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
-        symbol_err_rate, tot_symbol_errs, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
+        symbol_err_rate, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
         
         loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
 
@@ -330,7 +329,6 @@ class Waveunet(pl.LightningModule):
         self.log("val_loss", loss )
         self.log("val_avg_err_reduction", avg_err_reduction)
         self.log("val_symbol_error_rate", symbol_err_rate)
-        self.log("val_total_symbol_errors", tot_symbol_errs)
         self.log("val_speechMSEloss", speechMSEloss)
         self.log("val_gt_symbol_error_rate_no_reverb", gt_symbol_err_rate_no_reverb)
         self.log("val_gt_symbol_error_rate_reverb", gt_symbol_err_rate_reverb)

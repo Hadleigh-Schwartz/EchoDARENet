@@ -170,13 +170,18 @@ class DareDataset(Dataset):
             else:
                 reverb_speech = np.zeros_like(reverb_speech)
          
-        # fig, ax = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
-        # ax[0].plot(speech, label = "orig", alpha = 0.5)
-        # ax[0].set_title("Original Speech")
-        # ax[1].plot(reverb_speech, label = "reverb", alpha = 0.5)
-        # ax[1].set_title("Reverberant Speech")
-        # plt.savefig(f"speech_samps/plots/{idx}.png")
-        # plt.clf()
+        fig, ax = plt.subplots(3, 1, figsize=(10, 6), tight_layout=True)
+        ax[0].plot(speech, label = "orig", alpha = 0.5)
+        ax[0].set_title("Original Speech")
+        ax[0].set_xlim(0, 32777)
+        ax[1].plot(reverb_speech, label = "reverb", alpha = 0.5)
+        ax[1].set_title("Reverberant Speech")
+        ax[1].set_xlim(0, 32777)
+        ax[2].plot(rir, label = "rir", alpha = 0.5)
+        ax[2].set_title("RIR")
+        ax[2].set_xlim(0, 2000)
+        plt.savefig(f"speech_samps/plots/{idx}.png")
+        plt.clf()
 
         reverb_speech = np.pad(
             reverb_speech,
@@ -209,7 +214,6 @@ class DareDataset(Dataset):
         idx_rir    = idx % len(self.rir_dataset)
 
         speech = self.speech_dataset[idx_speech][0].flatten()
-
 
         speech = np.pad(
             speech,
@@ -298,7 +302,6 @@ class DareDataset(Dataset):
             rs_mag = rs_mag / rs_mag.max() / 2 - 1
 
             reverb_speech = np.stack((rs_mag, np.angle(reverb_speech_stft)))
-        
         elif self.stft_format == 'realimag':
             reverb_speech = np.stack((np.real(reverb_speech_stft), np.imag(reverb_speech_stft)))
             reverb_speech = reverb_speech - np.mean(reverb_speech)
@@ -338,7 +341,7 @@ class DareDataset(Dataset):
         rir_fft = rir_fft / np.max(np.abs(rir_fft))
 
         # trim speech_wav by one sample to match the inverse STFT output in the model 
-        return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
+        return reverb_speech, speech, speech_wav, rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
 
     def __getitem__(self, idx):
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
@@ -362,9 +365,10 @@ class DareDataset(Dataset):
                 reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
                
         if self.model == "Waveunet":
+            # make symbols to tensor on speech device
             return reverb_speech, speech, rir, symbols, num_errs_no_reverb, num_errs_reverb
-        else:
-            return reverb_speech, speech, speech_wav[:-1], rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
+        else:  
+            return reverb_speech, speech, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
         
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)

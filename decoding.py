@@ -47,7 +47,24 @@ class DecodingLoss(nn.Module):
             return autocep_decoded
     
 
-    def efficient_forward(self, audio_batch, gt_symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
+    def forward(self, audio_batch, gt_symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
+        """
+        Compute various loss functions for the decoding task.
+
+        TODO: Ceptral loss
+
+        Parameters:
+            audio_batch : torch.Tensor (batch_size, 1, num_samples)
+                Batch of audio samples in time domain
+            gt_symbols_batch : torch.Tensor (batch_size, num_symbols) 
+                Batch of groudn-truth symbols that were encoded onto the clean speech
+            num_errs_no_reverb_batch : torch.Tensor (batch_size)
+                Batch of number of errors when decoding the encoded clean speech (these can occur due to confounding peaks in speech 
+                cepstra and are independent of the reverb or network)
+            num_errs_reverb_batch : torch.Tensor (batch_size)
+                Batch of number of errors when decoding the encoded reverb speech 
+        
+        """
      
         num_wins = audio_batch.shape[2] // self.win_size
         max_audio_len = num_wins * self.win_size
@@ -64,14 +81,14 @@ class DecodingLoss(nn.Module):
   
         # compute avg error rate
         all_gt_symbols = gt_symbols_batch.reshape(-1) # (batch_size, num_symbols) -> (batch_size * num_wins)
-        accuracy = Accuracy(task="multiclass", num_classes=len(self.delays))
+        accuracy = Accuracy(task="multiclass", num_classes=len(self.delays)).to(audio_batch.device)
         sym_err_rate = 1 - accuracy(all_pred_symbols, all_gt_symbols) 
 
         # compute err reduction loss, defined as the current number of errors per audio sample in the batch 
         # divided by the number of errors per input reverberant audio sample, normed by the num errs in the non-reverb audio, 
         # as those errors are "inevitable" and unrelated to the reverb 
         all_pred_symbols = all_pred_symbols.reshape(audio_batch.shape[0], num_wins) # (batch_size * num_wins, 1) -> (batch_size, num_wins)
-        samplewise_accuracy = Accuracy(task="multiclass", num_classes=len(self.delays), multidim_average='samplewise')  
+        samplewise_accuracy = Accuracy(task="multiclass", num_classes=len(self.delays), multidim_average='samplewise').to(audio_batch.device) 
         num_err_per_samp = (1 - samplewise_accuracy(all_pred_symbols, gt_symbols_batch)) * num_wins
         norm_num_err_per_samp_premodel = torch.clamp(num_errs_reverb_batch - num_errs_no_reverb_batch, min = 1)
         err_reduction_loss_per_samp = torch.clamp(num_err_per_samp - num_errs_no_reverb_batch, min = 0) / norm_num_err_per_samp_premodel
@@ -81,83 +98,10 @@ class DecodingLoss(nn.Module):
         no_reverb_sym_err_rate = torch.sum(num_errs_no_reverb_batch) / (audio_batch.shape[0] * num_wins)
         reverb_sym_err_rate = torch.sum(num_errs_reverb_batch) / (audio_batch.shape[0] * num_wins)
 
-        print("Fast", sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate)
+        # print("Fast", sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate)
+        return sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate
 
-    def forward(self, audio_batch, symbols_batch, num_errs_no_reverb_batch, num_errs_reverb_batch):
-        """
-        TODO: check out these to make more efficient
-        https://discuss.pytorch.org/t/apply-a-function-similar-to-map-on-a-tensor/51088/5
-        https://pytorch.org/functorch/stable/generated/functorch.vmap.html
-
-        Parameters:
-            audio_batch : torch.Tensor (batch_size, 1, num_samples)
-                Batch of audio samples in time domain
-            symbols_batch : torch.Tensor (batch_size, num_symbols) 
-                Batch of groudn-truth symbols that were encoded onto the clean speech
-            num_errs_no_reverb_batch : torch.Tensor (batch_size)
-                Batch of number of errors when decoding the encoded clean speech (these can occur due to confounding peaks in speech 
-                cepstra and are independent of the reverb or network)
-            num_errs_reverb_batch : torch.Tensor (batch_size)
-                Batch of number of errors when decoding the encoded reverb speech 
-        """
-        tot_sym_err = 0 # total symbol errors (differentiable)
-        tot_err_reduction = 0 # accrue total error reduction (differentiable)
-        gt_symbol_err_rate_reverb = 0
-        gt_symbol_err_rate_no_reverb = 0
-
-        num_wins = audio_batch.shape[2] // self.win_size
-        max_audio_len = num_wins * self.win_size
-        for audio_idx in range(audio_batch.shape[0]):
-            audio = audio_batch[audio_idx, 0, :max_audio_len]
-            symbols = symbols_batch[audio_idx]
-            num_errs_no_reverb = num_errs_no_reverb_batch[audio_idx]
-            num_errs_reverb = num_errs_reverb_batch[audio_idx]
-           
-            curr_audio_tot_sym_err = 0
-            # pred_symbols = []
-
-            if self.cutoff_freq is not None: # high-pass filter the window 
-                audio = highpass_biquad(audio,  self.cutoff_freq , self.sample_rate) # FILTERING IS WRONG???
-            for i in range(num_wins):
-                win = audio[i * self.win_size: (i + 1) * self.win_size]
-
-                if self.decoding == "cepstrum":
-                    cepstrum = self.torch_get_cepstrum(win)
-                    cep_vals = cepstrum[self.delays]
-                    cep_decoded = self.softargmax(cep_vals)
-                    cep_sym_err = torch.clamp(torch.abs(cep_decoded - symbols[i]), min = 0, max = 1)
-                    curr_audio_tot_sym_err = curr_audio_tot_sym_err + cep_sym_err
-                    # pred_symbols.append(int(cep_decoded.item()))
-
-                else:
-                    autocepstrum = self.torch_get_autocepstrum(win)
-                    autocepstrum_vals  = autocepstrum[self.delays]
-                    max_autocepstrum_val  = self.softargmax(autocepstrum_vals )
-                    autocep_sym_err = torch.clamp(torch.abs(max_autocepstrum_val - symbols[i]), min = 0, max = 1)
-                    curr_audio_tot_sym_err = curr_audio_tot_sym_err + autocep_sym_err
-                    # pred_symbols.append(int(max_autocepstrum_val.item()))
-                    
-            # print(pred_symbols) 
-            # print(symbols.detach().cpu().numpy().tolist())
-            # print('-----------------')
-            tot_sym_err = tot_sym_err + curr_audio_tot_sym_err
-            if num_errs_reverb - num_errs_no_reverb == 0:
-                curr_audio_err_reduction = 1
-            else:
-                curr_audio_err_reduction = ((num_errs_reverb - num_errs_no_reverb) - (curr_audio_tot_sym_err - num_errs_no_reverb)) / (num_errs_reverb - num_errs_no_reverb)
-            tot_err_reduction = tot_err_reduction + (1 / curr_audio_err_reduction)
-
-            gt_symbol_err_rate_no_reverb = gt_symbol_err_rate_no_reverb + num_errs_no_reverb
-            gt_symbol_err_rate_reverb = gt_symbol_err_rate_reverb + num_errs_reverb
-
-        sym_err_rate = tot_sym_err / (audio_batch.shape[0] * num_wins)
-        avg_err_reduction = tot_err_reduction / audio_batch.shape[0]
-        gt_symbol_err_rate_no_reverb = gt_symbol_err_rate_no_reverb / (audio_batch.shape[0] * num_wins)
-        gt_symbol_err_rate_reverb = gt_symbol_err_rate_reverb / (audio_batch.shape[0] * num_wins)
-        
-        print("Forward", sym_err_rate, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb)
-        return sym_err_rate, tot_sym_err, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb
-
+     
     def softargmax(self, x):
         """
         beta original 1e10

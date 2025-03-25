@@ -7,7 +7,7 @@ rir_duration: 32767
 nfft: 16383
 nhop: 2048
 nfrms: 16
-min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+min_early_reverb: 0.000 # 0.007 is actual...minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 echo_encode: True
 prealign_rir: False
 norm_audio : True
@@ -16,7 +16,7 @@ data_in_ram: False
 
 Encoding: # echo encoding params
   delays: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100] 
-  amplitude: 0.8
+  amplitude: 0.4
   win_size: 2048
   kernel: "bp"
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
@@ -29,7 +29,7 @@ Model:
   nfrms: 16
   use_transformer: True
   use_speechbranch: True
-  alph: 0.9
+  alph: 1
 
 DataLoader:
   batch_size: 16
@@ -41,7 +41,7 @@ DataLoader:
 
 ModelCheckpoint:
   monitor: val_loss
-  dirpath: checkpoints
+  dirpath: cepstrum_checkpoints
 
 LearningRateMonitor:
   logging_interval: epoch
@@ -66,7 +66,7 @@ Trainer:
   log_every_n_steps: 100
   check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [0]
+  devices: [1]
 
 # RichProgressBar:
 #   refresh_rate: 100
