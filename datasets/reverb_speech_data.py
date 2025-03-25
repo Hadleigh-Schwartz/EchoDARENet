@@ -170,18 +170,18 @@ class DareDataset(Dataset):
             else:
                 reverb_speech = np.zeros_like(reverb_speech)
          
-        fig, ax = plt.subplots(3, 1, figsize=(10, 6), tight_layout=True)
-        ax[0].plot(speech, label = "orig", alpha = 0.5)
-        ax[0].set_title("Original Speech")
-        ax[0].set_xlim(0, 32777)
-        ax[1].plot(reverb_speech, label = "reverb", alpha = 0.5)
-        ax[1].set_title("Reverberant Speech")
-        ax[1].set_xlim(0, 32777)
-        ax[2].plot(rir, label = "rir", alpha = 0.5)
-        ax[2].set_title("RIR")
-        ax[2].set_xlim(0, 2000)
-        plt.savefig(f"speech_samps/plots/{idx}.png")
-        plt.clf()
+        # fig, ax = plt.subplots(3, 1, figsize=(10, 6), tight_layout=True)
+        # ax[0].plot(speech, label = "orig", alpha = 0.5)
+        # ax[0].set_title("Original Speech")
+        # ax[0].set_xlim(0, 32777)
+        # ax[1].plot(reverb_speech, label = "reverb", alpha = 0.5)
+        # ax[1].set_title("Reverberant Speech")
+        # ax[1].set_xlim(0, 32777)
+        # ax[2].plot(rir, label = "rir", alpha = 0.5)
+        # ax[2].set_title("RIR")
+        # ax[2].set_xlim(0, 2000)
+        # plt.savefig(f"speech_samps/plots/{idx}.png")
+        # plt.clf()
 
         reverb_speech = np.pad(
             reverb_speech,

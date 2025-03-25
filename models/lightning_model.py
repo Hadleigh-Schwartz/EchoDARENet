@@ -8,7 +8,7 @@ from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
 import matplotlib.pyplot as plt
 import numpy as np
 
-from decoding import DecodingLoss
+from decoding import TimeDomainDecodingLoss
 
 def getModel(model_name=None,learning_rate=1e-3,nfft=511,nfrms=16,use_transformer=False,use_speechbranch=False,alph=0):
     if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate=learning_rate,nfft=nfft,nfrms=nfrms,use_transformer=use_transformer,use_speechbranch=use_speechbranch,alph=alph)
@@ -43,7 +43,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.eps = 1e-16
 
     
-        self.decoding_loss = DecodingLoss([50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100], 
+        self.decoding_loss = TimeDomainDecodingLoss([50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100], 
                                           2048, 
                                           "cepstrum", 
                                           1000, 

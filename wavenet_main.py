@@ -14,6 +14,7 @@ import random
 import numpy as np
 import os
 from WaveUnet.waveunet import Waveunet
+from pytorch_lightning.loggers import TensorBoardLogger
 
 random.seed(   getConfig()['random_seed'])
 np.random.seed(getConfig()['random_seed'])
@@ -63,12 +64,15 @@ def main(args):
 
     # Profiler
     profiler = AdvancedProfiler(**cfg['AdvancedProfiler'])
+
+    logger = TensorBoardLogger("wavenet_logs")
     
     # PyTorch Lightning Train
     trainer = pl.Trainer(
         **cfg['Trainer'],
         # strategy=strategy,
         #profiler=profiler,
+        logger = logger,
         callbacks=[ckpt_callback,lr_monitor]
         )
 

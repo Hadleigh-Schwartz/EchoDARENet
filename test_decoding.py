@@ -8,7 +8,7 @@ from scipy.signal import fftconvolve, resample
 
 import torch
 
-from decoding import DecodingLoss
+from decoding import TimeDomainDecodingLoss, CepstralDomainDecodingLoss
 
 # append echo encoding parent dir to path
 import time
@@ -61,8 +61,8 @@ def test_decoding_loss():
         SR = 16000
     audio = audio[:32777] 
 
-    # initialize a DecodingLoss object
-    decoding_loss = DecodingLoss(delays, win_size, decoding , cutoff_freq, SR, 1e10)
+    # initialize a TimeDomainDecodingLoss object
+    decoding_loss = TimeDomainDecodingLoss(delays, win_size, decoding , cutoff_freq, SR, 1e10)
 
     num_wins = len(audio) // win_size
     audio = audio[:num_wins * win_size]
@@ -148,7 +148,7 @@ def examine_softargmax():
 
     # pass them through the softargmax function
     for beta in [10**b for b in range(11)]:
-        decoding_loss = DecodingLoss(delays, win_size, decoding , cutoff_freq, 16000, beta)
+        decoding_loss = TimeDomainDecodingLoss(delays, win_size, decoding , cutoff_freq, 16000, beta)
 
         a_out = decoding_loss.softargmax(a)
         b_out = decoding_loss.softargmax(b)
@@ -159,6 +159,22 @@ def examine_softargmax():
         print(f"b_out: {b_out}")
         print(f"c_out: {c_out}")
         print("--------------------------")
+
+
+def get_cepstrum_windows(audio, win_size):
+        num_wins = len(audio) // win_size
+       
+        win_cepstra = []
+        for i in range(num_wins):
+            win = audio[i * win_size : (i + 1) * win_size]
+
+            fft = np.fft.fft(win)
+            sqr_log_fft = np.log(np.abs(fft) + 0.00001)
+            cepstrum = np.fft.ifft(sqr_log_fft)
+            # only need the first half because second half is just the conjugate of the first half
+            cepstrum = cepstrum[:len(cepstrum) // 2]
+            win_cepstra.append(np.stack((np.real(cepstrum), np.imag(cepstrum))))
+        return win_cepstra    
 
 def test_decoding_loss2():
     delays = [i*2 for i in range(20, 75)]
@@ -184,8 +200,8 @@ def test_decoding_loss2():
         SR = 16000
     audio = audio[:32777] 
 
-    # initialize a DecodingLoss object
-    decoding_loss = DecodingLoss(delays, win_size, decoding , cutoff_freq, SR, 1e10)
+    # initialize a TimeDomainDecodingLoss object
+    decoding_loss = TimeDomainDecodingLoss(delays, win_size, decoding , cutoff_freq, SR, 1e10)
 
     num_wins = len(audio) // win_size
     audio = audio[:num_wins * win_size]
@@ -237,16 +253,25 @@ def test_decoding_loss2():
     num_errs_reverb_batch = num_errs_reverb_batch.repeat(test_batch_size)
     print(room_tradl_encoded_tensor.shape, symbols.shape, num_errs_no_reverb_batch.shape, num_errs_reverb_batch.shape)
 
-    # do a forward pass through the decoding loss
+    start = time.time()
+    sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate = decoding_loss(room_tradl_encoded_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
+    end = time.time()
+    print(f"Time domain results: {sym_err_rate}, {avg_err_reduction_loss}, {no_reverb_sym_err_rate}, {reverb_sym_err_rate}")
 
-    fast_start = time.time()
-    decoding_loss.efficient_forward(room_tradl_encoded_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
-    fast_end = time.time()
-    print(f"Efficient forward pass time: {fast_end - fast_start}")
+    # convert room_tradtl_encoded to cepstra
+    win_cepstra = get_cepstrum_windows(room_tradtl_encoded, win_size)
+    win_cepstra = np.dstack(win_cepstra)    
+    win_cepstra_tensor = torch.tensor(win_cepstra, dtype = torch.float32)
+    # reshape to 1, 2, 1024, 16
+    win_cepstra_tensor = win_cepstra_tensor.unsqueeze(0)
+    # duplicate to batches
+    win_cepstra_tensor = win_cepstra_tensor.repeat(test_batch_size, 1, 1, 1)
 
-    slow_start = time.time()
-    decoding_loss(room_tradl_encoded_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
-    slow_end = time.time()
-    print(f"Slow forward pass time: {slow_end - slow_start}")
+    # initialize CepstralDomainDecodingLoss
+    cepstral_decoding_loss = CepstralDomainDecodingLoss(delays, win_size, decoding , cutoff_freq, SR, 1e10)
+    start = time.time()
+    sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate = cepstral_decoding_loss(win_cepstra_tensor, symbols, num_errs_no_reverb_batch, num_errs_reverb_batch)
+    end = time.time()
+    print(f"Cepstral domain results: {sym_err_rate}, {avg_err_reduction_loss}, {no_reverb_sym_err_rate}, {reverb_sym_err_rate}")
 
 test_decoding_loss2()

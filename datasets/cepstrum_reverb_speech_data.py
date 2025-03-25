@@ -57,6 +57,7 @@ class DareDataset(Dataset):
         if self.data_in_ram:
             self.data = []
             self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
+
         
         if config["echo_encode"]:
             np.random.seed(config['random_seed']) # for echo_encoding symbol generation
@@ -74,10 +75,55 @@ class DareDataset(Dataset):
     def __len__(self):
         return self.dataset_len
     
+    def butter_highpass(self, cutoff, fs, order=5):
+        """
+        Create a Butterworth high-pass filter.
+
+        Parameters:
+            cutoff : float
+                The cutoff frequency for the high-pass filter.
+            fs : int
+                The sampling rate of the signal.
+            order : int
+                The order of the Butterworth filter.
+        
+        Returns:
+            tuple : The filter coefficients.
+        """
+        nyq = 0.5 * fs
+        normal_cutoff = cutoff / nyq
+        b, a = signal.butter(order, normal_cutoff, btype='high', analog=False)
+        # print("b:", b)
+        # print("a:", a)
+        return b, a
+
+    def butter_highpass_filter(self, data, cutoff, fs, order=5):
+        """
+        Apply a Butterworth high-pass filter to a signal.
+
+        Parameters: 
+            data : np.ndarray
+                The signal to filter.
+            cutoff : float
+                The cutoff frequency for the high-pass filter.
+            fs : int
+                The sampling rate of the signal.
+            order : int
+                The order of the Butterworth filter.
+        
+        Returns:
+            np.ndarray : The filtered signal.
+        """
+        b, a = self.butter_highpass(cutoff, fs, order=order)
+        y = signal.filtfilt(b, a, data)
+        return y
+    
     def get_cepstrum_windows(self, audio):
         num_wins = len(audio) // self.win_size
-       
-        # TODO: potentially bandpass filter this data
+    
+        if self.cutoff_freq is not None:
+            audio = self.butter_highpass_filter(audio, self.cutoff_freq, self.samplerate)
+
         win_cepstra = []
         for i in range(num_wins):
             win = audio[i * self.win_size : (i + 1) * self.win_size]
@@ -100,25 +146,17 @@ class DareDataset(Dataset):
 
         speech = self.speech_dataset[idx_speech][0].flatten()
 
+        # pad if not at least self.reverb_speech_duration
         speech = np.pad(
             speech,
             pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
             )
-        speech = speech[:self.reverb_speech_duration]
+
         if self.echo_encode:
             num_wins = len(speech) // self.win_size
             symbols = np.random.randint(0, len(self.delays), size = num_wins)
             speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
             speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
-
-            # decode encoded speech to get baseline error rate
-            pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
-            num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
-            num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
-            if self.decoding == "autocepstrum":
-                num_errs_no_reverb = num_errs_autocepstrum
-            elif self.decoding == "cepstrum":
-                num_errs_no_reverb = num_errs 
         else:
             symbols = 0
             num_errs_no_reverb = 0
@@ -149,13 +187,30 @@ class DareDataset(Dataset):
 
         reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
 
-        reverb_speech = np.pad(
-            reverb_speech,
-            pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
-            )
-        reverb_speech = reverb_speech[:self.reverb_speech_duration]
+        # randomly select a :self.reverb_speech_duration portion of speech,
+        start_options = [i for i in range(0, len(speech) - self.reverb_speech_duration + self.win_size, self.win_size)]
+        start = np.random.choice(start_options)
+        speech = speech[start:start + self.reverb_speech_duration]
+        reverb_speech = reverb_speech[start:start + self.reverb_speech_duration]
+        start_win = start // self.win_size
+        symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
+        # reverb_speech = np.pad(
+        #     reverb_speech,
+        #     pad_width=(0, np.max((0,self.reverb_speech_duration - len(reverb_speech)))),
+        #     )
+        # reverb_speech = reverb_speech[]
         
         if self.config["echo_encode"]:
+            # decode encoded speech to get baseline error rate
+            pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+            num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
+            num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
+            if self.decoding == "autocepstrum":
+                num_errs_no_reverb = num_errs_autocepstrum
+            elif self.decoding == "cepstrum":
+                num_errs_no_reverb = num_errs 
+            # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
+
             reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
             rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
             rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
@@ -167,8 +222,7 @@ class DareDataset(Dataset):
                 num_errs_reverb = rev_num_errs
         else:
             num_errs_reverb = 0
-            
-    
+        
         reverb_speech_cepstra = self.get_cepstrum_windows(reverb_speech)
         reverb_speech_cepstra = np.dstack(reverb_speech_cepstra)
     

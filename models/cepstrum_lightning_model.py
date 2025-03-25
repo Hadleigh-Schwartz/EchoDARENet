@@ -8,7 +8,7 @@ from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
 import matplotlib.pyplot as plt
 import numpy as np
 
-from decoding import DecodingLoss
+from decoding import CepstralDomainDecodingLoss
 
 def getModel(model_name=None,learning_rate=1e-3,nfft=511,nfrms=16,use_transformer=False,use_speechbranch=False,alph=0):
     if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate=learning_rate,nfft=nfft,nfrms=nfrms,use_transformer=use_transformer,use_speechbranch=use_speechbranch,alph=alph)
@@ -43,9 +43,8 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.eps = 1e-16
 
         self.delays = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
-        self.decoding_loss = DecodingLoss(self.delays, 
+        self.decoding_loss = CepstralDomainDecodingLoss(self.delays, 
                                           2048, 
-                                          "cepstrum", 
                                           1000, 
                                           16000, 
                                           1e10)
@@ -87,30 +86,34 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         ys = ys.float()
         x = x.float()
         y = y.float()
+
         y_hat, ys_hat = self.predict(x.float())
 
-        loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
+        loss1 = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
         if self.use_speechbranch: # the clean speech prediction branch
             loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
-            # sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.compute_echo_losses(batch_idx, ys_t, ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-            # self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-            # self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
-            # self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
-            # self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-            # loss = (1-self.alph) * loss + self.alph * loss2
-            loss = (1-self.alph) * loss + self.alph * loss2 
-        # self.log_dict("loss", {loss_type: loss })
+            sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
+            self.log(loss_type+"_cep_mse_loss", loss2, sync_dist = True )
+            self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+            self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
+            self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
+            self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
+            loss = (1-self.alph) * loss1 + self.alph * loss2 + sym_err_rate * 0.5
+        self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
         if batch_idx % 100 == 0:
             fh = plt.figure()
-            fig, axes = plt.subplots(3, 3, figsize=(12, 5), tight_layout=True)
-            for i in range(3):
-                axes[0, i].plot(x[0, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
-                axes[0, i].set_title(f"Input cepstrum sample 0 window {i}")
-                axes[1, i].plot(ys[0, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
-                axes[1, i].set_title(f"Clean speech cepstrum sample 0 window {i}")
-                axes[2, i].plot(ys_hat[0, 0,  self.delays[0] - 10:self.delays[-1] + 50, i].detach().cpu().numpy()) 
-                axes[2, i].set_title(f"Predicted clean speech cepstrum sample 0 window {i}")
+            fig, axes = plt.subplots(3, 4, figsize=(12, 5), tight_layout=True)
+            # randomly choose a batch elemement
+            batch_el = np.random.randint(0, x.shape[0])
+            window_start = np.random.randint(0, len(symbols[0])-4)
+            for i in range(window_start, window_start+4):
+                axes[0, i - window_start].plot(x[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
+                axes[0, i - window_start].set_title(f"Input cepstrum - Samp {batch_el} Win{i}")
+                axes[1, i - window_start].plot(ys[batch_el, 0, self.delays[0] - 10:self.delays[-1] + 50 , i].detach().cpu().numpy())
+                axes[1, i - window_start].set_title(f"Clean cepstrum - Samp {batch_el} Win{i}")
+                axes[2, i - window_start].plot(ys_hat[batch_el, 0,  self.delays[0] - 10:self.delays[-1] + 50, i].detach().cpu().numpy()) 
+                axes[2, i - window_start].set_title(f"Pred. cepstrum - Samp {batch_el} Win{i}")
             
             tb = self.logger.experiment
             tb.add_figure('Fig1', fig, global_step=self.global_step)
@@ -131,19 +134,18 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss = self.compute_losses(batch_idx, y, yt, y_hat, loss_type)[self.loss_ind] # the RIR prediction branchgi
         if self.use_speechbranch: # the clean speech prediction branch
             loss2 = self.compute_speech_loss(batch_idx, ys, None, ys_hat, loss_type)
-            # sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.compute_echo_losses(batch_idx, ys_t, ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-            # self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-            # self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
-            # self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
-            # self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-            # loss = (1-self.alph) * loss + self.alph * loss2
-            loss = (1-self.alph) * loss + self.alph * loss2 
-        # self.log_dict("loss", {loss_type: loss })
+            sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
+            self.log(loss_type+"cep_mse_loss", loss2, sync_dist = True )
+            self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+            self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
+            self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
+            self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
+            loss = (1-self.alph) * loss + self.alph * loss2 + sym_err_rate * 0.5
         self.log(loss_type+"_loss", loss, sync_dist = True )
         
         # self.make_plot(batch_idx, x, y, y_hat, losses[-1], ytfn)
 
-        self.weight_histograms()
+        # self.weight_histograms()
 
         return loss
 
@@ -192,13 +194,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         return out1Out, d4Out_2
     
 
-    def compute_echo_losses(self, batch_idx, gt_speech_time, pred_speech_stftf, symbols_batch, num_errs_no_reverb, num_errs_reverb):
-        pred_speech_c =   pred_speech_stftf[:,0,:,:] + 1j* pred_speech_stftf[:,1,:,:]
-        pred_speech_t = torch.istft( pred_speech_c, n_fft= 16383, hop_length=2048, return_complex=False, length = gt_speech_time.shape[1]) 
-        pred_speech_t = pred_speech_t.unsqueeze(1)
-        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate = self.decoding_loss(pred_speech_t, symbols_batch, num_errs_no_reverb, num_errs_reverb)
-        return sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate 
-
     def compute_speech_loss(self, batch_idx, y, yt, y_predict, type):
         """
         Compute all loss functions potentially incorporated during training.
@@ -217,23 +212,26 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         Returns:
             All of the computed losses
         """
-        # y_c =  y[:,0,:,:] + 1j*y[:,1,:,:]
-        # y_hat_c = y_predict[:,0,:,:] + 1j*y_predict[:,1,:,:]
+        # y_c =  y[:,0,:,:] #+ 1j*y[:,1,:,:]
+        # y_hat_c = y_predict[:,0,:,:] #+ 1j*y_predict[:,1,:,:]
+        # mse_abs = nn.functional.mse_loss(y_c, y_hat_c)
+
         p_hat = y_predict[:,0, self.delays[0] - 10:self.delays[-1] + 50,:]
         p = y[:,0, self.delays[0] - 10:self.delays[-1] + 50,:]
-        # minmax scale p and phat along last timension
         p_mins = p.min(dim = 1, keepdim=True)[0]        
         p_maxs = p.max(dim = 1, keepdim=True)[0]
         p = (p - p_mins) / (p_maxs - p_mins)
-        # replacae any infs with 0
-        p[torch.isinf(p)] = 0
+
         p_hat_mins = p_hat.min(dim = 1, keepdim=True)[0]
         p_hat_maxs = p_hat.max(dim = 1, keepdim=True)[0]
         p_hat = (p_hat - p_hat_mins) / (p_hat_maxs - p_hat_mins)
-        # replacae any infs with 0
+
         p_hat[torch.isinf(p_hat)] = 0
+        p[torch.isinf(p)] = 0
+        p_hat[torch.isnan(p_hat)] = 0
+        p[torch.isnan(p)] = 0
         mse_abs = nn.functional.mse_loss(p_hat, p)
-        # err_abs = nn.functional.l1_loss(y_predict[:,0,:,:],y[:,0,:,:])
+        
         return mse_abs
         
 

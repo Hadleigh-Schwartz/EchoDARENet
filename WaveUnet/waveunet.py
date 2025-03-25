@@ -8,7 +8,7 @@ from WaveUnet.crop import centre_crop
 from WaveUnet.resample import Resample1d
 from WaveUnet.conv import ConvLayer
 
-from decoding import DecodingLoss
+from decoding import TimeDomainDecodingLoss
 
 import auraloss # for MR-STFT loss 
 import matplotlib.pyplot as plt # for diagnostics only
@@ -133,7 +133,7 @@ class Waveunet(pl.LightningModule):
         # self.norm_audio = config["norm_audio"]
         self.alpha = config["WaveUnet"]["alpha"]
         self.soft_beta = config["WaveUnet"]["soft_beta"]
-        self.decoding_loss = DecodingLoss(config["Encoding"]["delays"], config["Encoding"]["win_size"], config["Encoding"]["decoding"], config["Encoding"]["cutoff_freq"], config["sample_rate"], 
+        self.decoding_loss = TimeDomainDecodingLoss(config["Encoding"]["delays"], config["Encoding"]["win_size"], config["Encoding"]["decoding"], config["Encoding"]["cutoff_freq"], config["sample_rate"], 
                                           softargmax_beta=self.soft_beta)
         
 
