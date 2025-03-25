@@ -10,19 +10,26 @@ import numpy as np
 
 from decoding import CepstralDomainDecodingLoss
 
-def getModel(model_name=None, learning_rate=1e-3, nfft=511, nfrms=16, use_transformer=False, alphas = [0, 0, 0, 0]):
-    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate=learning_rate,nfft=nfft,nfrms=nfrms,use_transformer=use_transformer, alphas = alphas)
+def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0], softargmax_beta = 100000,
+             delays = None, win_size = None, cutoff_freq = None, sample_rate = None):
+    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
+                                                                    use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta,
+                                                                    delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate)    
     else: raise Exception("Unknown model name.")
     return model
 
 class EchoSpeechDAREUnet(pl.LightningModule):
     def __init__(self,
         learning_rate=1e-3,
-        nfft=2**15-1,
-        nhop=(2**15)/(2**6),
-        nfrms=16,
+        nwins=16,
         use_transformer=True, 
-        alphas = [0, 0, 0, 0]):
+        alphas = [0, 0, 0, 0],
+        softargmax_beta = 100000,
+        delays = None,
+        win_size = None,
+        cutoff_freq = None,
+        sample_rate = None,
+        ):
         super().__init__()
         self.name = "EchoSpeechDAREUnet"
 
@@ -30,22 +37,21 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.learning_rate = learning_rate
         self.lr_scheduler_gamma = 0.9
         self.loss_ind = 0
-        self.si_sdr = ScaleInvariantSignalDistortionRatio()
-        self.nfft = nfft
-        # self.nhop = nhop
-        self.nfrms = nfrms
+      
+        self.nwins = nwins
         self.use_transformer = use_transformer
         self.alphas = alphas
-        self.win = t.hann_window(self.nfft)
-        self.mel_transform = ta.transforms.MelScale(n_mels=128,n_stft=self.nfft)
         self.eps = 1e-16
 
-        self.delays = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
-        self.decoding_loss = CepstralDomainDecodingLoss(self.delays, 
-                                          2048, 
-                                          1000, 
-                                          16000, 
-                                          1e10)
+        self.delays = delays
+        self.win_size = win_size
+        self.cutoff_freq = cutoff_freq
+        self.sample_rate = sample_rate
+        self.decoding_loss = CepstralDomainDecodingLoss(delays, 
+                                          win_size, 
+                                          cutoff_freq, 
+                                          sample_rate, 
+                                          softargmax_beta)
 
         self.init()
 
@@ -73,11 +79,11 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv3_2 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
         self.deconv4_2 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
-        self.out1 = nn.Sequential(nn.Conv2d(2,   2, (1,self.nfrms), stride=1, padding=0), nn.Tanh())
+        self.out1 = nn.Sequential(nn.Conv2d(2,   2, (1,self.nwins), stride=1, padding=0), nn.Tanh())
 
 
     def predict(self, x):
-        
+
 
         c1Out = self.conv1(x)     # (64 x 64 x  64)
         c2Out = self.conv2(c1Out) # (16 x 16 x 128)
@@ -126,7 +132,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_rir_loss", loss1, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
-        if batch_idx % 400 == 0:
+        if batch_idx % 200 == 0:
             fh = plt.figure()
             fig, axes = plt.subplots(3, 4, figsize=(12, 5), tight_layout=True)
             batch_el = np.random.randint(0, x.shape[0])
@@ -297,11 +303,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             mse_abs = nn.functional.mse_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
             err_abs = nn.functional.l1_loss(y_hat_c[:,0,:,:],y_c[:,0,:,:])
 
-        # y_hat_c_mel = self.mel_transform(t.abs(y_hat_c))
-        # y_c_mel = self.mel_transform(t.abs(y_c))
-        # err_abs_mel = nn.functional.l1_loss(t.log(y_hat_c_mel),t.log(y_c_mel))
-        # mse_abs_mel = nn.functional.mse_loss(t.log(y_hat_c_mel),t.log(y_c_mel))
-        
+     
         y1 = t.sin(t.angle(y_c))
         y2 = t.cos(t.angle(y_c))
         y_hat1 = t.sin(t.angle(y_hat_c))

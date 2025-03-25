@@ -1,15 +1,12 @@
 datasets_path: ./Datasets
 random_seed: 230
 
-stft_format: realimag # realimag or magphase
-stft_format_sp: magphase
 rir_duration: 32767
 nfft: 16383
-nhop: 2048
-nfrms: 16
+nwins: 16
 min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
-echo_encode: True
 prealign_rir: False
+sample_rate: 16000
 
 data_in_ram: False
 
@@ -24,10 +21,10 @@ Encoding: # echo encoding params
 Model:
   model_name: EchoSpeechDAREUnet
   learning_rate: 0.0001
-  nfft: 8192
-  nfrms: 16
+  nwins: 16
   use_transformer: True
   alphas: [0.01, 0.99, 0.5, 0.0] # cepstrum MSE loss weight, RIR loss weight, symbol error rate weight
+  softargmax_beta : 10000000
 
 DataLoader:
   batch_size: 8
@@ -62,7 +59,7 @@ Trainer:
   accumulate_grad_batches: 1
   log_every_n_steps: 50
   # val_check_interval: 1 # val every this fraction of an epoch
-  check_val_every_n_epoch: 2
+  check_val_every_n_epoch: 1
   accelerator: gpu
   devices: [0]
 

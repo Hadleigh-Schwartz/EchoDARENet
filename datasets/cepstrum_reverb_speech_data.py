@@ -32,37 +32,30 @@ class DareDataset(Dataset):
         
         self.dataset_len = self.config['DataLoader']['batch_size'] * self.config['Trainer']["limit_"+type+"_batches"]
         
-        self.stft_format = self.config['stft_format']
-        self.stft_format_sp = self.config['stft_format_sp']
-        self.eps = 10**-32
-
-        self.samplerate = self.speech_dataset[0][1]
+        self.samplerate = self.config['sample_rate']
+        assert self.samplerate == self.speech_dataset[0][1] 
 
         self.rir_duration = config['rir_duration']
         self.rir_sos = signal.butter(6, 40, 'hp', fs=self.samplerate, output='sos') # Seems that this is largely for denoising the RIRs??
 
-        self.nfrms = config['nfrms']
-        self.nhop = self.config['nhop']
-        self.reverb_speech_duration = self.nfrms * self.nhop
 
         self.data_in_ram = config['data_in_ram']
         if self.data_in_ram:
             self.data = []
             self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
 
+        np.random.seed(config['random_seed']) # for echo_encoding symbol generation
+        self.amplitude = config["Encoding"]["amplitude"]
+        self.delays = config["Encoding"]["delays"]
+        self.win_size = config["Encoding"]["win_size"]
+        self.kernel = config["Encoding"]["kernel"]
+        self.decoding = config["Encoding"]["decoding"]
+        assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
+        self.cutoff_freq = config["Encoding"]["cutoff_freq"]
+        self.nwins = config["nwins"]
         
-        if config["echo_encode"]:
-            np.random.seed(config['random_seed']) # for echo_encoding symbol generation
-            self.echo_encode = True
-            self.amplitude = config["Encoding"]["amplitude"]
-            self.delays = config["Encoding"]["delays"]
-            self.win_size = config["Encoding"]["win_size"]
-            self.kernel = config["Encoding"]["kernel"]
-            self.decoding = config["Encoding"]["decoding"]
-            assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
-            self.cutoff_freq = config["Encoding"]["cutoff_freq"]
-        else:
-            self.echo_encode = False
+        self.reverb_speech_duration = self.nwins * self.win_size
+
 
     def __len__(self):
         return self.dataset_len
@@ -144,15 +137,12 @@ class DareDataset(Dataset):
             pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
             )
 
-        if self.echo_encode:
-            num_wins = len(speech) // self.win_size
-            symbols = np.random.randint(0, len(self.delays), size = num_wins)
-            speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
-            speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
-        else:
-            symbols = 0
-            num_errs_no_reverb = 0
-
+ 
+        num_wins = len(speech) // self.win_size
+        symbols = np.random.randint(0, len(self.delays), size = num_wins)
+        speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
+        speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
+    
         rir,rirfn = self.rir_dataset[idx_rir]
         rir = rir.flatten()
         rir = rir[~np.isnan(rir)]
@@ -192,29 +182,27 @@ class DareDataset(Dataset):
         #     )
         # reverb_speech = reverb_speech[]
         
-        if self.config["echo_encode"]:
-            # decode encoded speech to get baseline error rate
-            pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
-            num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
-            num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
-            if self.decoding == "autocepstrum":
-                num_errs_no_reverb = num_errs_autocepstrum
-            elif self.decoding == "cepstrum":
-                num_errs_no_reverb = num_errs 
-            # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
 
-            reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
-            rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
-            rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
-            rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
-            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
-            if self.decoding == "autocepstrum":
-                num_errs_reverb = rev_num_errs_autocepstrum
-            elif self.decoding == "cepstrum":
-                num_errs_reverb = rev_num_errs
-        else:
-            num_errs_reverb = 0
-        
+        # decode encoded speech to get baseline error rate
+        pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+        num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
+        num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
+        if self.decoding == "autocepstrum":
+            num_errs_no_reverb = num_errs_autocepstrum
+        elif self.decoding == "cepstrum":
+            num_errs_no_reverb = num_errs 
+        # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
+
+        reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
+        rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+        rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
+        rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
+        # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+        if self.decoding == "autocepstrum":
+            num_errs_reverb = rev_num_errs_autocepstrum
+        elif self.decoding == "cepstrum":
+            num_errs_reverb = rev_num_errs
+      
         reverb_speech_cepstra = self.get_cepstrum_windows(reverb_speech)
         reverb_speech_cepstra = np.dstack(reverb_speech_cepstra)
     
