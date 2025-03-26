@@ -46,7 +46,7 @@ class DareDataset(Dataset):
             self.data = []
             self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
 
-        np.random.seed(config['random_seed']) # for echo_encoding symbol generation
+        # np.random.seed(config['random_seed']) # for echo_encoding symbol generation already set in main though
         self.amplitude = config["Encoding"]["amplitude"]
         self.delays = config["Encoding"]["delays"]
         self.win_size = config["Encoding"]["win_size"]
@@ -80,8 +80,6 @@ class DareDataset(Dataset):
         nyq = 0.5 * fs
         normal_cutoff = cutoff / nyq
         b, a = signal.butter(order, normal_cutoff, btype='high', analog=False)
-        # print("b:", b)
-        # print("a:", a)
         return b, a
 
     def butter_highpass_filter(self, data, cutoff, fs, order=5):
@@ -128,7 +126,6 @@ class DareDataset(Dataset):
         """
         Original Dare datalaoder with echo encoding added
         """
-        print(idx)
         idx_speech = idx % len(self.speech_dataset)
         if self.same_batch_rir:
             idx_rir = (idx // self.batch_size) % len(self.rir_dataset)
@@ -242,12 +239,36 @@ class DareDataset(Dataset):
             reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
         
         return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
-        
+
+def batch_sampler(config, type="train"):
+    dummy_dataset = DareDataset(config, type=type)
+    dataset_len = len(dummy_dataset)
+    batch_size = config['DataLoader']['batch_size']
+    # dividing the dataset into batches
+    num_batches = dataset_len // batch_size
+    indices = np.arange(dataset_len)
+    if type != "train":
+        # use batches of increasing nums, not randomized  
+        indices = np.array_split(indices, num_batches)
+    elif config["same_batch_rir"]:
+        # ensure each batch consists of the same RIR by having consecutive indices within batch
+        batch_start_ids = np.arange(0, num_batches)
+        np.random.shuffle(batch_start_ids)
+        indices = []
+        for i in batch_start_ids:
+            indices.append(list(np.arange(i * batch_size, (i + 1) * batch_size)))
+    else:
+        # emulate a vanilla random sampler, i.e., shuffle the indices, then divide into batches
+        np.random.shuffle(indices)
+        indices = np.array_split(indices, num_batches)
+    return indices    
+
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)
-    if type != "train":
-        cfg['DataLoader']['shuffle'] = False
-    return DataLoader(DareDataset(cfg,type),**cfg['DataLoader'])
+    # if type != "train":
+    #     cfg['DataLoader']['shuffle'] = False
+    return DataLoader(DareDataset(cfg,type), num_workers = cfg["DataLoader"]["num_workers"], persistent_workers = cfg["DataLoader"]["persistent_workers"], pin_memory = cfg["DataLoader"]["pin_memory"], 
+                       batch_sampler=batch_sampler(cfg, type))
 
 class DareDataModule(LightningDataModule):
     def __init__(self,config):

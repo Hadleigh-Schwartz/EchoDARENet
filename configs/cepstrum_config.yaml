@@ -24,9 +24,9 @@ Model:
   learning_rate: 0.0001
   nwins: 16
   use_transformer: True
-  alphas: [0.01, 0.99, 0.5, 0.0, 0.1] # RIR loss weight, cepstrum MSE loss weight, symbol error rate weight, inter-batch RIR diff loss
+  alphas: [0.5, 0.5, 0.5, 0.0, 0] # RIR loss weight, cepstrum MSE loss weight, symbol error rate weight, intra-batch RIR diff loss
   softargmax_beta : 10000000
-  residual: False
+  residual: True
 
 DataLoader:
   batch_size: 8

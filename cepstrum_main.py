@@ -25,7 +25,12 @@ def main(args):
     cfg = getConfig(config_path=args.config_path)
 
     # PyTorch Lightning Models
-    model = getModel(**cfg['Model'], delays = cfg["Encoding"]["delays"], win_size = cfg["Encoding"]["win_size"], cutoff_freq = cfg["Encoding"]["cutoff_freq"], sample_rate = cfg["sample_rate"])
+    model = getModel(**cfg['Model'], 
+                        delays = cfg["Encoding"]["delays"],
+                        win_size = cfg["Encoding"]["win_size"], 
+                        cutoff_freq = cfg["Encoding"]["cutoff_freq"],
+                        sample_rate = cfg["sample_rate"], 
+                        same_batch_rir=cfg["same_batch_rir"])
 
     # Data Module
     datamodule = DareDataModule(config=cfg)
