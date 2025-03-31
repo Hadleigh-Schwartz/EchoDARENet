@@ -7,7 +7,7 @@ nwins: 16
 min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 prealign_rir: False
 sample_rate: 16000
-same_batch_rir: True
+same_batch_rir: False
 
 data_in_ram: False
 
@@ -24,7 +24,7 @@ Model:
   learning_rate: 0.0001
   nwins: 16
   use_transformer: True
-  alphas: [0.0, 0.99, 0.5, 0.0, 0] # RIR loss weight, cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
+  alphas: [0.01, 0.99, 0.5, 0.0, 0] # RIR loss weight, cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
   softargmax_beta : 10000000
   residual: True
 

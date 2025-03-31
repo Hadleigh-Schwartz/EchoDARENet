@@ -40,7 +40,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.has_init = False
         self.learning_rate = learning_rate
         self.lr_scheduler_gamma = 0.9
-        self.loss_ind = 16 # prev 0 (freq-domain)
+        self.loss_ind = 0 # prev 0 (freq-domain)
 
         
         self.nwins = nwins
@@ -77,7 +77,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
         
         if self.use_transformer:
-            self.transformer = nn.Transformer(d_model=256, nhead=4, num_encoder_layers=3, num_decoder_layers=3, batch_first=True)
+            self.transformer = nn.Transformer(d_model=256, nhead=4, num_encoder_layers=5, num_decoder_layers=5, batch_first=True)
 
         self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
@@ -88,6 +88,39 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv2_2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv3_2 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
         self.deconv4_2 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+
+
+
+        # self.conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
+        # self.conv2 = nn.Sequential(nn.Conv2d( 64,  128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
+        # self.conv3 = nn.Sequential(nn.Conv2d( 128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
+        # self.conv4 = nn.Sequential(nn.Conv2d( 256, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
+        # self.conv5 = nn.Sequential(nn.Conv2d(512, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
+        # self.conv6 = nn.Sequential(nn.Conv2d(512, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
+        # self.conv7 = nn.Sequential(nn.Conv2d(512, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
+        # self.conv8 = nn.Sequential(nn.Conv2d(512, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
+        
+        # if self.use_transformer:
+        #     self.transformer = nn.Transformer(d_model=512, nhead=4, num_encoder_layers=3, num_decoder_layers=3, batch_first=True)
+
+        # self.deconv1 = nn.Sequential(nn.ConvTranspose2d(512, 1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv2 = nn.Sequential(nn.ConvTranspose2d(1024, 1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv3 = nn.Sequential(nn.ConvTranspose2d(1024,  1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024),  nn.ReLU())
+        # self.deconv4 = nn.Sequential(nn.ConvTranspose2d(1024,   1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024),  nn.ReLU())
+        # self.deconv5 = nn.Sequential(nn.ConvTranspose2d(1024,   512, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(512),  nn.ReLU()) 
+        # self.deconv6 = nn.Sequential(nn.ConvTranspose2d(512,   256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256),  nn.ReLU()) 
+        # self.deconv7 = nn.Sequential(nn.ConvTranspose2d(256,   128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128),  nn.ReLU())
+        # self.deconv8 = nn.Sequential(nn.ConvTranspose2d(128,    2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh())
+
+        # self.deconv1_2 = nn.Sequential(nn.ConvTranspose2d(512, 1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv2_2 = nn.Sequential(nn.ConvTranspose2d(1024, 1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv3_2 = nn.Sequential(nn.ConvTranspose2d(1024,  1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024),  nn.ReLU())
+        # self.deconv4_2 = nn.Sequential(nn.ConvTranspose2d(1024,   1024, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1024),  nn.ReLU())
+        # self.deconv5_2 = nn.Sequential(nn.ConvTranspose2d(1024,   512, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(512),  nn.ReLU())
+        # self.deconv6_2 = nn.Sequential(nn.ConvTranspose2d(512,   256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256),  nn.ReLU())
+        # self.deconv7_2 = nn.Sequential(nn.ConvTranspose2d(256,   128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128),  nn.ReLU())
+        # self.deconv8_2 = nn.Sequential(nn.ConvTranspose2d(128,    2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh())
+
 
         self.out1 = nn.Sequential(nn.Conv2d(2,   2, (1,self.nwins), stride=1, padding=0), nn.Tanh())
 
@@ -105,13 +138,18 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             c4Out = self.transformer(\
                 c4Out.squeeze().permute((0,2,1)), \
                 c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
-
+        
+        # rir representation branch
         d1Out = self.deconv1(c4Out) # (  4 x   4 x 256)
         d2Out = self.deconv2(t.cat((d1Out, c3Out), dim=1)) # ( 16 x  16 x 128)
         d3Out = self.deconv3(t.cat((d2Out, c2Out), dim=1)) # ( 64 x  64 x 128)
+        print(d3Out.shape)
         d4Out = self.deconv4(t.cat((d3Out, c1Out), dim=1)) # (256 x 256 x 1)
+        print("yo", d4Out.shape)
         out1Out = self.out1(d4Out) # (256 x 256 x 1)
+        print(out1Out.shape)
 
+        # cepstrum
         d1Out_2 = self.deconv1_2(c4Out) # (  4 x   4 x 256)
         d2Out_2 = self.deconv2_2(t.cat((d1Out_2, c3Out), dim=1)) # ( 16 x  16 x 128)
         d3Out_2 = self.deconv3_2(t.cat((d2Out_2, c2Out), dim=1)) # ( 64 x  64 x 128)
@@ -119,8 +157,48 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
         if self.residual:
             d4Out_2 = d4Out_2 + residual
-    
+
         return out1Out, d4Out_2
+
+        # c1Out = self.conv1(x)     
+        # c2Out = self.conv2(c1Out) 
+        # c3Out = self.conv3(c2Out) 
+        # c4Out = self.conv4(c3Out) 
+        # c5Out = self.conv5(c4Out)
+        # c6Out = self.conv6(c5Out)
+        # c7Out = self.conv7(c6Out)
+        # c8Out = self.conv8(c7Out) # (512 x 512 x 2)
+        # print(c1Out.shape, c2Out.shape, c3Out.shape, c4Out.shape, c5Out.shape, c6Out.shape, c7Out.shape, c8Out.shape)
+
+        # if self.use_transformer:
+        #     c8Out = self.transformer(\
+        #         c8Out.squeeze().permute((0,2,1)), \
+        #         c8Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
+        # print(c8Out.shape)
+        # d1Out = self.deconv1(c8Out) 
+        # print(d1Out.shape)
+        # d2Out = self.deconv2(t.cat((d1Out, c7Out), dim=1))
+        # d3Out = self.deconv3(t.cat((d2Out, c6Out), dim=1)) 
+        # d4Out = self.deconv4(t.cat((d3Out, c5Out), dim=1)) 
+        # d5Out = self.deconv5(t.cat((d4Out, c4Out), dim=1))
+        # d6Out = self.deconv6(t.cat((d5Out, c3Out), dim=1))
+        # d7Out = self.deconv7(t.cat((d6Out, c2Out), dim=1))
+        # d8Out = self.deconv8(t.cat((d7Out, c1Out), dim=1)) 
+        # out1Out = self.out1(d8Out) 
+
+        # d1Out_2 = self.deconv1_2(c4Out) 
+        # d2Out_2 = self.deconv2_2(t.cat((d1Out_2, c7Out), dim=1)) 
+        # d3Out_2 = self.deconv3_2(t.cat((d2Out_2, c6Out), dim=1)) 
+        # d4Out_2 = self.deconv4_2(t.cat((d3Out_2, c5Out), dim=1)) 
+        # d5Out_2 = self.deconv5_2(t.cat((d4Out_2, c4Out), dim=1))
+        # d6Out_2 = self.deconv6_2(t.cat((d5Out_2, c3Out), dim=1))
+        # d7Out_2 = self.deconv7_2(t.cat((d6Out_2, c2Out), dim=1))
+        # d8Out_2 = self.deconv8_2(t.cat((d7Out_2, c1Out), dim=1))
+
+        # if self.residual:
+        #     d8Out_2 = d8Out_2 + residual
+    
+        # return out1Out, d8Out_2
     
     def training_step(self, batch, batch_idx):
         loss_type = "train"
