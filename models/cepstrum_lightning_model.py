@@ -79,28 +79,24 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         if self.use_transformer:
             self.transformer = nn.Transformer(d_model=256, nhead=4, num_encoder_layers=5, num_decoder_layers=5, batch_first=True)
 
-        # num_features = 1024
-        # self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
-        # self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128, 32, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(32),  nn.ReLU()) # for symmetry with other block also change to Tanh
-        # self.deconv5 = nn.Sequential(nn.ConvTranspose2d(32,  1, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1))
-        # # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
-        # # flatten deconv5 output, then proceed
-        # self.dropout = nn.Dropout(p=0.25, inplace=True)
-        # self.fc = nn.Linear(65536, num_features) #65536=2048*32
-        # self.features = nn.BatchNorm1d(num_features, eps=1e-05)
-        # nn.init.constant_(self.features.weight, 1.0)
-        # self.features.weight.requires_grad = False
-        # # alternatively, use convolutions to get to 1xnum_features shape
-        # # self.out1 = nn.Sequential(nn.Conv2d(1,  1, (1, self.nwins), stride=s, padding=0), nn.BatchNorm2d(1), nn.ReLU(), 
-        # #                           nn.Conv2d(1,  1, k, stride=s, padding=0), nn.BatchNorm2d(1), nn.ReLU(), 
-        # #                           nn.Conv2d(1,  1, 3, stride=s, padding=0), nn.BatchNorm2d(1), nn.ReLU())
-
         self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+
+
+        num_rirs = 1024
+        self.disc_conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
+        self.disc_conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
+        self.disc_conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
+        self.disc_conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
+        # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
+        # flatten deconv5 output, then proceed
+        self.dropout = nn.Dropout(p=0.25, inplace=True)
+        self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
+        self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
+        nn.init.constant_(self.features.weight, 1.0)
+        self.features.weight.requires_grad = False
 
     def predict(self, x):
         if self.residual:
@@ -116,27 +112,36 @@ class EchoSpeechDAREUnet(pl.LightningModule):
                 c4Out.squeeze().permute((0,2,1)), \
                 c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
         
-        # # rir representation branch
-        # d1Out = self.deconv1(c4Out) # (  4 x   4 x 256)
-        # d2Out = self.deconv2(t.cat((d1Out, c3Out), dim=1)) # ( 16 x  16 x 128)
-        # d3Out = self.deconv3(t.cat((d2Out, c2Out), dim=1)) # ( 64 x  64 x 128)
-        # d4Out = self.deconv4(t.cat((d3Out, c1Out), dim=1)) # (256 x 256 x 1)
-        # d5Out = self.deconv5(d4Out) # (512 x 512 x 1)
-        # out1 = torch.flatten(d5Out, 1)
-        # out1 = self.dropout(out1)
-        # out1 = self.fc(out1)
-        # out1 = self.features(out1)
-
-        # window cepstra branch
         d1Out = self.deconv1(c4Out) # (  4 x   4 x 256)
         d2Out = self.deconv2(t.cat((d1Out, c3Out), dim=1)) # ( 16 x  16 x 128)
         d3Out = self.deconv3(t.cat((d2Out, c2Out), dim=1)) # ( 64 x  64 x 128)
         d4Out = self.deconv4(t.cat((d3Out, c1Out), dim=1)) # (256 x 256 x 1)
 
         if self.residual:
-            d4Out = d4Out + residual
+            cep_out = d4Out + residual
+        else:
+            cep_out = d4Out
 
-        return d4Out
+        # # rir representation branch
+        # print("d4Out shape: ", d4Out.shape)
+        disc1Out = self.disc_conv1(d4Out)     
+        # print("disc1Out shape: ", disc1Out.shape)  
+        disc2Out = self.disc_conv2(disc1Out)
+        # print("disc2Out shape: ", disc2Out.shape)
+        disc3Out = self.disc_conv3(disc2Out)
+        # print("disc3Out shape: ", disc3Out.shape)
+        disc4Out = self.disc_conv4(disc3Out)
+        # print("disc4Out shape: ", disc4Out.shape)
+        discOut = torch.flatten(disc4Out, 1)  # flatten the output for the fully connected layer
+        # print("discOut shape: ", discOut.shape)
+        discOut = self.dropout(discOut)  # apply dropout
+        # print( "After dropout, discOut shape: ", discOut.shape)
+        discOut = self.fc(discOut)  # fully connected layer
+        # print("After fc, discOut shape: ", discOut.shape)
+        discOut = self.features(discOut)  # batch normalization
+        # print( "After features, discOut shape: ", discOut.shape)
+  
+        return cep_out, discOut
 
     def training_step(self, batch, batch_idx):
         loss_type = "train"
@@ -147,7 +152,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         x = x.float()
         y = y.float()
         
-        ys_hat = self.predict(x) # RIR embedding, predicted clean speech window cepstra
+        ys_hat, d_hat = self.predict(x) # RIR embedding, predicted clean speech window cepstra
   
         if batch_idx % 200 == 0:
             plot = True
@@ -184,7 +189,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         yt = yt.float()
         x = x.float()
         y = y.float()
-        ys_hat = self.predict(x)
+        ys_hat, d_hat = self.predict(x)
     
         # if self.same_batch_rir:
         #     intrabatch_rir_mse = self.compute_intrabatch_rir_mse(y_hat, loss_type = loss_type) # the RIR prediction branch
