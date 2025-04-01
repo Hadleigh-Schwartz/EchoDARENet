@@ -47,6 +47,8 @@ class MitIrSurveyDataset(Dataset):
     def get_exclude_rirs(self):
         """
         Get list of filenames of RIRs that are excluded from the dataset based on their early reverb time
+
+        Early reverb time is taken to coincide with the max value in the RIR
         """
         min_early_reverb = self.config["min_early_reverb"]
         exclude_rirs = []
