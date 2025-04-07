@@ -2,9 +2,10 @@ from torch import optim, nn
 from torch.optim import lr_scheduler
 import pytorch_lightning as pl
 import torch as t
+from torch.autograd import Function
 import torch.utils.data
 import torchaudio as ta
-from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
+
 import matplotlib.pyplot as plt
 import numpy as np
 import math
@@ -13,12 +14,28 @@ from colorama import Fore, Style
 from decoding import CepstralDomainDecodingLoss
 
 def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0, 0], softargmax_beta = 100000, residual = False,
-             delays = None, win_size = None, cutoff_freq = None, sample_rate = None, same_batch_rir = False):
+            delays = None, win_size = None, cutoff_freq = None, sample_rate = None, same_batch_rir = False, reverse_gradient = False, plot_every_n_steps=100,
+            norm_cepstra = True, cepstrum_target_region=None):
     if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
                                                                     use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta, residual = residual,
-                                                                    delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate, same_batch_rir = same_batch_rir)    
+                                                                    delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate, same_batch_rir = same_batch_rir, 
+                                                                    reverse_gradient = reverse_gradient, plot_every_n_steps=plot_every_n_steps, norm_cepstra = norm_cepstra, cepstrum_target_region = cepstrum_target_region)    
     else: raise Exception("Unknown model name.")
     return model
+
+class ReverseLayerF(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
 
 class EchoSpeechDAREUnet(pl.LightningModule):
     def __init__(self,
@@ -33,26 +50,37 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         cutoff_freq = None,
         sample_rate = None,
         same_batch_rir = False,
+        reverse_gradient = False,
+        plot_every_n_steps=100,
+        norm_cepstra = True,
+        cepstrum_target_region=None
         ):
         super().__init__()
         self.name = "EchoSpeechDAREUnet"
 
         self.has_init = False
         self.learning_rate = learning_rate
-        self.lr_scheduler_gamma = 0.9
-        self.loss_ind = 0 # prev 0 (freq-domain)
-
-        
+        self.reverse_gradient = reverse_gradient
+        self.plot_every_n_steps = plot_every_n_steps
         self.nwins = nwins
         self.use_transformer = use_transformer
-        self.alphas = alphas
-        self.eps = 1e-16
         self.residual = residual
         self.same_batch_rir = same_batch_rir
+        self.norm_cepstra = norm_cepstra
+        self.alphas = alphas
+        if cepstrum_target_region is not None:
+            self.cepstrum_target_region = cepstrum_target_region
+        else:
+            self.cepstrum_target_region = [delays[0] - 10, delays[-1] + 50] # default
 
-        if same_batch_rir is False and self.alphas[4] != 0:
+        self.lr_scheduler_gamma = 0.9
+        self.eps = 1e-16
+
+
+        if same_batch_rir is False and self.alphas[3] != 0:
             print(Fore.RED + "WARNING: intrabatch_rir_mse loss is not used when same_batch_rir is False." + Style.RESET_ALL)
 
+         #initialize encoding parameters and decoding loss
         self.delays = delays
         self.win_size = win_size
         self.cutoff_freq = cutoff_freq
@@ -85,18 +113,18 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
 
-        num_rirs = 1024
-        self.disc_conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
-        self.disc_conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
-        self.disc_conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
-        self.disc_conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
-        # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
-        # flatten deconv5 output, then proceed
-        self.dropout = nn.Dropout(p=0.25, inplace=True)
-        self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
-        self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
-        nn.init.constant_(self.features.weight, 1.0)
-        self.features.weight.requires_grad = False
+        # num_rirs = 40
+        # self.disc_conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
+        # self.disc_conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
+        # self.disc_conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
+        # self.disc_conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
+        # # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
+        # # flatten deconv5 output, then proceed
+        # self.dropout = nn.Dropout(p=0.25)
+        # self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
+        # self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
+        # # nn.init.constant_(self.features.weight, 1.0)
+        # # self.features.weight.requires_grad = False
 
     def predict(self, x):
         if self.residual:
@@ -122,39 +150,51 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         else:
             cep_out = d4Out
 
-        # # rir representation branch
-        # print("d4Out shape: ", d4Out.shape)
-        disc1Out = self.disc_conv1(d4Out)     
-        # print("disc1Out shape: ", disc1Out.shape)  
-        disc2Out = self.disc_conv2(disc1Out)
-        # print("disc2Out shape: ", disc2Out.shape)
-        disc3Out = self.disc_conv3(disc2Out)
-        # print("disc3Out shape: ", disc3Out.shape)
-        disc4Out = self.disc_conv4(disc3Out)
-        # print("disc4Out shape: ", disc4Out.shape)
-        discOut = torch.flatten(disc4Out, 1)  # flatten the output for the fully connected layer
-        # print("discOut shape: ", discOut.shape)
-        discOut = self.dropout(discOut)  # apply dropout
-        # print( "After dropout, discOut shape: ", discOut.shape)
-        discOut = self.fc(discOut)  # fully connected layer
-        # print("After fc, discOut shape: ", discOut.shape)
-        discOut = self.features(discOut)  # batch normalization
-        # print( "After features, discOut shape: ", discOut.shape)
+        discOut = None
+        # # #compute the value of alpha
+        # # if epoch >0 and total>0:
+        # #     p = float(1 + (epoch) * total) / (epoch) / total
+        # #     alpha = 2. / (1. + np.exp(-10 * p)) - 1
+        # # else:
+        # #     alpha = 0.5
+        # if self.reverse_gradient:
+        #     d4Out = ReverseLayerF.apply(d4Out, 0.5)
+
+        # # # rir representation branch
+        # # print("d4Out shape: ", d4Out.shape)
+        # disc1Out = self.disc_conv1(d4Out)     
+        # # print("disc1Out shape: ", disc1Out.shape)  
+        # disc2Out = self.disc_conv2(disc1Out)
+        # # print("disc2Out shape: ", disc2Out.shape)
+        # disc3Out = self.disc_conv3(disc2Out)
+        # # print("disc3Out shape: ", disc3Out.shape)
+        # disc4Out = self.disc_conv4(disc3Out)
+        # # print("disc4Out shape: ", disc4Out.shape)
+        # discOut = torch.flatten(disc4Out, 1)  # flatten the output for the fully connected layer
+        # # print("discOut shape: ", discOut.shape)
+        # discOut = self.dropout(discOut)  # apply dropout
+        # # print( "After dropout, discOut shape: ", discOut.shape)
+        # discOut = self.fc(discOut)  # fully connected layer
+        # # print("After fc, discOut shape: ", discOut.shape)
+        # discOut = self.features(discOut)  # batch normalization
+        # # print( "After features, discOut shape: ", discOut.shape)
   
         return cep_out, discOut
 
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
-        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         ys = ys.float()
         yt = yt.float()
         x = x.float()
         y = y.float()
-        
+
         ys_hat, d_hat = self.predict(x) # RIR embedding, predicted clean speech window cepstra
+        # d_loss = nn.CrossEntropyLoss()(d_hat, idxs_rir)
+        d_loss = 0
   
-        if batch_idx % 200 == 0:
+        if batch_idx % self.plot_every_n_steps == 0:
             plot = True
         else:
             plot = False
@@ -163,7 +203,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         #     intrabatch_rir_mse = self.compute_intrabatch_rir_mse(y_hat, loss_type = loss_type) # the RIR prediction branch
         # else:
         #     intrabatch_rir_mse = 0 # doesn't apply
-        intrabatch_rir_mse = 0
+        intrabatch_rir_mse = d_loss
         cepstra_loss = self.compute_speech_loss(ys, ys_hat) # the speech prediction branch
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
         loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * intrabatch_rir_mse
@@ -183,19 +223,17 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
-        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb = batch 
+        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch 
         
         ys = ys.float()
         yt = yt.float()
         x = x.float()
         y = y.float()
         ys_hat, d_hat = self.predict(x)
-    
-        # if self.same_batch_rir:
-        #     intrabatch_rir_mse = self.compute_intrabatch_rir_mse(y_hat, loss_type = loss_type) # the RIR prediction branch
-        # else:
-        #     intrabatch_rir_mse = 0 # doesn't apply
-        intrabatch_rir_mse = 0
+
+        # TODO
+        d_loss = 0
+        intrabatch_rir_mse = d_loss
         cepstra_loss = self.compute_speech_loss(ys,ys_hat)
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
         loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * intrabatch_rir_mse
@@ -237,21 +275,21 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         """
         # only examine encoding-relevant region of cepstra, as a large portion of it beyond this region is close to zero
         # considering this largely zero-valued tail causes the MSE to be close to zero all the time
-        p_hat = y_predict[:,0, self.delays[0] - 10:self.delays[-1] + 50,:] 
-        p = y[:,0, self.delays[0] - 10:self.delays[-1] + 50,:]
-        ## minmax scasle target region
-        # p_mins = p.min(dim = 1, keepdim=True)[0]        
-        # p_maxs = p.max(dim = 1, keepdim=True)[0]
-        # p = (p - p_mins) / (p_maxs - p_mins)
-        # p_hat_mins = p_hat.min(dim = 1, keepdim=True)[0]
-        # p_hat_maxs = p_hat.max(dim = 1, keepdim=True)[0]
-        # p_hat = (p_hat - p_hat_mins) / (p_hat_maxs - p_hat_mins)
-        # p_hat[torch.isinf(p_hat)] = 0
-        # p[torch.isinf(p)] = 0
-        # p_hat[torch.isnan(p_hat)] = 0
-        # p[torch.isnan(p)] = 0
+        p_hat = y_predict[:,0, self.cepstrum_target_region[0]:self.cepstrum_target_region[1],:] 
+        p = y[:,0, self.cepstrum_target_region[0]:self.cepstrum_target_region[1],:]
+        if self.norm_cepstra:
+            # minmax scasle target region
+            p_mins = p.min(dim = 1, keepdim=True)[0]        
+            p_maxs = p.max(dim = 1, keepdim=True)[0]
+            p = (p - p_mins) / (p_maxs - p_mins)
+            p_hat_mins = p_hat.min(dim = 1, keepdim=True)[0]
+            p_hat_maxs = p_hat.max(dim = 1, keepdim=True)[0]
+            p_hat = (p_hat - p_hat_mins) / (p_hat_maxs - p_hat_mins)
+            p_hat[torch.isinf(p_hat)] = 0
+            p[torch.isinf(p)] = 0
+            p_hat[torch.isnan(p_hat)] = 0
+            p[torch.isnan(p)] = 0
         mse_abs = nn.functional.mse_loss(p_hat, p)
-        
         return mse_abs
     
     def compute_intrabatch_rir_mse(self, y_hat, loss_type = "train"):
@@ -404,8 +442,8 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
-        return optimizer
-        # scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
-        # return [optimizer], [scheduler]
+        # return optimizer
+        scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
+        return [optimizer], [scheduler]
 
     

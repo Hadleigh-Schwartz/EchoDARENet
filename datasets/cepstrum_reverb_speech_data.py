@@ -131,7 +131,7 @@ class DareDataset(Dataset):
             idx_rir = (idx // self.batch_size) % len(self.rir_dataset)
         else:
             idx_rir    = idx % len(self.rir_dataset)
-
+               
         speech = self.speech_dataset[idx_speech][0].flatten()
 
         # pad if not at least self.reverb_speech_duration
@@ -140,7 +140,7 @@ class DareDataset(Dataset):
             pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
             )
 
- 
+
         num_wins = len(speech) // self.win_size
         symbols = np.random.randint(0, len(self.delays), size = num_wins)
         speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
@@ -221,7 +221,7 @@ class DareDataset(Dataset):
         rir_fft = rir_fft / np.max(np.abs(rir_fft))
 
         # trim speech_wav by one sample to match the inverse STFT output in the model 
-        return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
+        return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft[:,:,None], rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
 
     def __getitem__(self, idx):
         """
@@ -229,16 +229,16 @@ class DareDataset(Dataset):
         """
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
            
-            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.get_dare_item(idx)
+            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.get_dare_item(idx)
             
             if self.data_in_ram:
-                self.data.append((reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb))
+                self.data.append((reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
-            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
+            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.data[self.idx_to_data[idx]]
         
-        return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb
+        return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
 
 def batch_sampler(config, type="train"):
     dummy_dataset = DareDataset(config, type=type)

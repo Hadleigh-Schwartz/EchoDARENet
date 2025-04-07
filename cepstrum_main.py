@@ -30,7 +30,10 @@ def main(args):
                         win_size = cfg["Encoding"]["win_size"], 
                         cutoff_freq = cfg["Encoding"]["cutoff_freq"],
                         sample_rate = cfg["sample_rate"], 
-                        same_batch_rir=cfg["same_batch_rir"])
+                        same_batch_rir=cfg["same_batch_rir"], 
+                        plot_every_n_steps=cfg["plot_every_n_steps"],
+                        norm_cepstra=cfg["norm_cepstra"], 
+                        cepstrum_target_region = cfg["cep_target_region"])
 
     # Data Module
     datamodule = DareDataModule(config=cfg)

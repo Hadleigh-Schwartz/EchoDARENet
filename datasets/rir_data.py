@@ -40,7 +40,10 @@ class MitIrSurveyDataset(Dataset):
     
         # get excluded RIR filenames and remove them
         exclude_filenames = self.get_exclude_rirs()
+
         self.split_filenames = [f for f in self.split_filenames if f not in exclude_filenames]
+        # print("hiiii1", len(self.split_filenames), self.split_edge)
+        # print("hiiii", len(exclude_filenames), len(self.split_filenames))
    
         self.device = device
 

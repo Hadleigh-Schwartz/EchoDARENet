@@ -7,8 +7,10 @@ nwins: 16
 min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 prealign_rir: False
 sample_rate: 16000
-same_batch_rir: True
-
+same_batch_rir: False
+plot_every_n_steps: 50
+norm_cepstra: True
+cep_target_region: [30, 150] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 data_in_ram: False
 
 Encoding: # echo encoding params
@@ -21,10 +23,11 @@ Encoding: # echo encoding params
 
 Model:
   model_name: EchoSpeechDAREUnet
-  learning_rate: 0.00001
+  reverse_gradient: False
+  learning_rate: 0.0001
   nwins: 16
   use_transformer: True
-  alphas: [1, 0, 0.5, 0.5] # cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
+  alphas: [1, 1, 0, 0] # cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
   softargmax_beta : 10000000
   residual: True
 
@@ -53,15 +56,15 @@ AdvancedProfiler:
   line_count_restriction: 1.0
 
 Trainer:
-  limit_train_batches: 1000
+  limit_train_batches: 20000
   limit_val_batches: 3
   limit_test_batches: 111
   max_epochs: 100
   num_sanity_val_steps: 1
   accumulate_grad_batches: 1
-  log_every_n_steps: 10 # logs every n steps where n is the number of batches
-  # val_check_interval: 1 # val every this fraction of an epoch
+  # log_every_n_steps: 10 # logs every n steps where n is the number of batches
+  val_check_interval: 0.05 # val every this fraction of an epoch
   check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [0]
+  devices: [1]
 
