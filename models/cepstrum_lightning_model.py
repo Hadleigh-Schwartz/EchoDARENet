@@ -112,19 +112,23 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
-
-        # num_rirs = 40
-        # self.disc_conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
-        # self.disc_conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
-        # self.disc_conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
-        # self.disc_conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
-        # # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
-        # # flatten deconv5 output, then proceed
-        # self.dropout = nn.Dropout(p=0.25)
-        # self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
-        # self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
-        # # nn.init.constant_(self.features.weight, 1.0)
-        # # self.features.weight.requires_grad = False
+    
+        num_rirs = 40
+        self.disc_deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
+        self.disc_deconv2 = nn.Sequential(nn.ConvTranspose2d(256, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
+        self.disc_deconv3 = nn.Sequential(nn.ConvTranspose2d(128,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
+        self.disc_deconv4 = nn.Sequential(nn.ConvTranspose2d(64,   1, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+        # self.disc_conv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.disc_conv2 = nn.Sequential(nn.Conv2d( 512, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
+        # self.disc_conv3 = nn.Sequential(nn.Conv2d(256, 64, k, stride=s, padding=k//2), nn.BatchNorm2d(64), nn.LeakyReLU(leaky_slope))
+        # self.disc_conv4 = nn.Sequential(nn.Conv2d(128, 2, k, stride=s, padding=k//2), nn.BatchNorm2d(2), nn.ReLU())
+        # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
+        # flatten deconv5 output, then proceed
+        self.dropout = nn.Dropout(p=0.25)
+        self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
+        self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
+        # nn.init.constant_(self.features.weight, 1.0)
+        # self.features.weight.requires_grad = False
 
     def predict(self, x):
         if self.residual:
@@ -150,34 +154,35 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         else:
             cep_out = d4Out
 
-        discOut = None
-        # # #compute the value of alpha
-        # # if epoch >0 and total>0:
-        # #     p = float(1 + (epoch) * total) / (epoch) / total
-        # #     alpha = 2. / (1. + np.exp(-10 * p)) - 1
-        # # else:
-        # #     alpha = 0.5
-        # if self.reverse_gradient:
-        #     d4Out = ReverseLayerF.apply(d4Out, 0.5)
+    
+        # #compute the value of alpha
+        # if epoch >0 and total>0:
+        #     p = float(1 + (epoch) * total) / (epoch) / total
+        #     alpha = 2. / (1. + np.exp(-10 * p)) - 1
+        # else:
+        #     alpha = 0.5
+        if self.reverse_gradient:
+            c4Out = ReverseLayerF.apply(c4Out, 0.5)
 
-        # # # rir representation branch
-        # # print("d4Out shape: ", d4Out.shape)
-        # disc1Out = self.disc_conv1(d4Out)     
-        # # print("disc1Out shape: ", disc1Out.shape)  
-        # disc2Out = self.disc_conv2(disc1Out)
-        # # print("disc2Out shape: ", disc2Out.shape)
-        # disc3Out = self.disc_conv3(disc2Out)
-        # # print("disc3Out shape: ", disc3Out.shape)
-        # disc4Out = self.disc_conv4(disc3Out)
-        # # print("disc4Out shape: ", disc4Out.shape)
-        # discOut = torch.flatten(disc4Out, 1)  # flatten the output for the fully connected layer
-        # # print("discOut shape: ", discOut.shape)
-        # discOut = self.dropout(discOut)  # apply dropout
-        # # print( "After dropout, discOut shape: ", discOut.shape)
-        # discOut = self.fc(discOut)  # fully connected layer
-        # # print("After fc, discOut shape: ", discOut.shape)
-        # discOut = self.features(discOut)  # batch normalization
-        # # print( "After features, discOut shape: ", discOut.shape)
+        # rir representation branch
+        print("c4Out shape: ", c4Out.shape)
+        discOut = self.disc_deconv1(c4Out)
+        discOut = self.disc_deconv2(discOut)
+        discOut = self.disc_deconv3(discOut)
+        discOut = self.disc_deconv4(discOut)
+        # print("post deconv discOut shape: ", discOut.shape)
+        # discOut = self.disc_conv1(discOut)    
+        # discOut = self.disc_conv2(discOut)
+        # discOut = self.disc_conv3(discOut)
+        # discOut = self.disc_conv4(discOut)
+        discOut = torch.flatten(discOut, 1)  # flatten the output for the fully connected layer
+        # print("post conv discOut shape: ", discOut.shape)
+        discOut = self.dropout(discOut)  # apply dropout
+        # print( "After dropout, discOut shape: ", discOut.shape)
+        discOut = self.fc(discOut)  # fully connected layer
+        # print("After fc, discOut shape: ", discOut.shape)
+        discOut = self.features(discOut)  # batch normalization
+        # print( "After features, discOut shape: ", discOut.shape)
   
         return cep_out, discOut
 
