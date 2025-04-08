@@ -1,0 +1,64 @@
+datasets_path: ./Datasets
+random_seed: 230
+
+rir_duration: 30735 # must be at least greater than the number of windows*win size. also, should num_wins*win_size should be odd so that FFT+convolutions work out.
+min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+prealign_rir: False
+sample_rate: 16000
+plot_every_n_steps: 50
+fft_target_region: [0, 4000] # start and end (samples) of region of the spectrum to consider in computing the FFt loss # NOTE: Should be related to delays below
+data_in_ram: False
+
+Encoding: # echo encoding params
+  delays: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100] 
+  amplitude: 0.8
+  win_size: 2049
+  kernel: "bp"
+  decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
+  cutoff_freq: 1000
+
+Model:
+  model_name: EchoSpeechDAREUnet
+  reverse_gradient: True
+  learning_rate: 0.0001
+  use_transformer: True
+  alphas: [1, 1, 0, 0] # cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
+  softargmax_beta : 10000000
+
+DataLoader:
+  batch_size: 16
+  num_workers: 16
+  persistent_workers: True
+  shuffle: True
+  drop_last: True
+  pin_memory: True
+
+ModelCheckpoint:
+  monitor: val_loss
+  dirpath: cepstrum_checkpoints
+
+LearningRateMonitor:
+  logging_interval: epoch
+
+DDPStrategy:
+  process_group_backend: gloo
+  find_unused_parameters: False
+
+AdvancedProfiler:
+  dirpath: null
+  filename: advanced_profiler.txt
+  line_count_restriction: 1.0
+
+Trainer:
+  limit_train_batches: 2000
+  limit_val_batches: 3
+  limit_test_batches: 111
+  max_epochs: 100
+  num_sanity_val_steps: 1
+  accumulate_grad_batches: 1
+  log_every_n_steps: 10 # logs every n steps where n is the number of batches
+  # val_check_interval: 0.05 # val every this fraction of an epoch
+  check_val_every_n_epoch: 1
+  accelerator: gpu
+  devices: [0]
+

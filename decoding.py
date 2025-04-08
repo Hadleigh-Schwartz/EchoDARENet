@@ -200,8 +200,8 @@ class TimeDomainDecodingLoss(DecodingLoss):
         all_pred_symbols = all_pred_symbols.reshape(audio_batch.shape[0], num_wins) # (batch_size * num_wins, 1) -> (batch_size, num_wins)
         samplewise_accuracy = Accuracy(task="multiclass", num_classes=len(self.delays), multidim_average='samplewise').to(audio_batch.device) 
         num_err_per_samp = (1 - samplewise_accuracy(all_pred_symbols, gt_symbols_batch)) * num_wins
-        norm_num_err_per_samp_premodel = torch.clamp(num_errs_reverb_batch - num_errs_no_reverb_batch, min = 1)
-        err_reduction_loss_per_samp = torch.clamp(num_err_per_samp - num_errs_no_reverb_batch, min = 0) / norm_num_err_per_samp_premodel
+        norm_num_err_per_samp_premodel = torch.clamp(num_errs_reverb_batch, min = 1) # torch.clamp(num_errs_reverb_batch - num_errs_no_reverb_batch, min = 1)
+        err_reduction_loss_per_samp =  torch.clamp(num_err_per_samp, min = 0) / norm_num_err_per_samp_premodel # torch.clamp(num_err_per_samp - num_errs_no_reverb_batch, min = 0) / norm_num_err_per_samp_premodel
         avg_err_reduction_loss = torch.mean(err_reduction_loss_per_samp)
 
         # compute ground truth symbol error rate for reverb and non-reverb, for logging purposes
