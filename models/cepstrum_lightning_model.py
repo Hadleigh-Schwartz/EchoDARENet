@@ -164,61 +164,57 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         if self.reverse_gradient:
             c4Out = ReverseLayerF.apply(c4Out, 0.5)
 
-        # rir representation branch
-        print("c4Out shape: ", c4Out.shape)
-        discOut = self.disc_deconv1(c4Out)
-        discOut = self.disc_deconv2(discOut)
-        discOut = self.disc_deconv3(discOut)
-        discOut = self.disc_deconv4(discOut)
-        # print("post deconv discOut shape: ", discOut.shape)
-        # discOut = self.disc_conv1(discOut)    
-        # discOut = self.disc_conv2(discOut)
-        # discOut = self.disc_conv3(discOut)
-        # discOut = self.disc_conv4(discOut)
-        discOut = torch.flatten(discOut, 1)  # flatten the output for the fully connected layer
-        # print("post conv discOut shape: ", discOut.shape)
-        discOut = self.dropout(discOut)  # apply dropout
-        # print( "After dropout, discOut shape: ", discOut.shape)
-        discOut = self.fc(discOut)  # fully connected layer
-        # print("After fc, discOut shape: ", discOut.shape)
-        discOut = self.features(discOut)  # batch normalization
-        # print( "After features, discOut shape: ", discOut.shape)
+        # # rir representation branch
+        # print("c4Out shape: ", c4Out.shape)
+        # discOut = self.disc_deconv1(c4Out)
+        # discOut = self.disc_deconv2(discOut)
+        # discOut = self.disc_deconv3(discOut)
+        # discOut = self.disc_deconv4(discOut)
+        # # print("post deconv discOut shape: ", discOut.shape)
+        # # discOut = self.disc_conv1(discOut)    
+        # # discOut = self.disc_conv2(discOut)
+        # # discOut = self.disc_conv3(discOut)
+        # # discOut = self.disc_conv4(discOut)
+        # discOut = torch.flatten(discOut, 1)  # flatten the output for the fully connected layer
+        # # print("post conv discOut shape: ", discOut.shape)
+        # discOut = self.dropout(discOut)  # apply dropout
+        # # print( "After dropout, discOut shape: ", discOut.shape)
+        # discOut = self.fc(discOut)  # fully connected layer
+        # # print("After fc, discOut shape: ", discOut.shape)
+        # discOut = self.features(discOut)  # batch normalization
+        # # print( "After features, discOut shape: ", discOut.shape)
+        discOut = None
   
         return cep_out, discOut
 
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
-        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech cepstra, clean speech cepstra, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         ys = ys.float()
         yt = yt.float()
         x = x.float()
         y = y.float()
 
-        ys_hat, d_hat = self.predict(x) # RIR embedding, predicted clean speech window cepstra
-        # d_loss = nn.CrossEntropyLoss()(d_hat, idxs_rir)
-        d_loss = 0
-  
+        ys_hat, _ = self.predict(x) # RIR embedding, predicted clean speech window cepstra
+        # ys2_hat, _ = self.predict(ys)
+      
         if batch_idx % self.plot_every_n_steps == 0:
             plot = True
         else:
             plot = False
 
-        # if self.same_batch_rir:
-        #     intrabatch_rir_mse = self.compute_intrabatch_rir_mse(y_hat, loss_type = loss_type) # the RIR prediction branch
-        # else:
-        #     intrabatch_rir_mse = 0 # doesn't apply
-        intrabatch_rir_mse = d_loss
+        pair_loss = nn.functional.mse_loss(ys, ys2_hat)
         cepstra_loss = self.compute_speech_loss(ys, ys_hat) # the speech prediction branch
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * intrabatch_rir_mse
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * pair_loss
         
         self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-        self.log(loss_type+"_rir_intrabatch_rir_mse", intrabatch_rir_mse, sync_dist = True )
+        self.log(loss_type+"_pair_loss", pair_loss, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
       
         if plot:
@@ -228,31 +224,31 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
-        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch 
-        
+        x, ys, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech cepstra, clean speech cepstra, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         ys = ys.float()
         yt = yt.float()
         x = x.float()
         y = y.float()
-        ys_hat, d_hat = self.predict(x)
 
-        # TODO
-        d_loss = 0
-        intrabatch_rir_mse = d_loss
-        cepstra_loss = self.compute_speech_loss(ys,ys_hat)
+        ys_hat, _ = self.predict(x) # RIR embedding, predicted clean speech window cepstra
+        ys2_hat, _ = self.predict(ys)
+   
+        pair_loss = nn.functional.mse_loss(ys, ys2_hat)
+        cepstra_loss = self.compute_speech_loss(ys, ys_hat) # the speech prediction branch
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(ys_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * intrabatch_rir_mse
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss + self.alphas[3] * pair_loss
         
-        self.log(loss_type+"cep_mse_loss", cepstra_loss, sync_dist = True )
+        self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-        self.log(loss_type+"_rir_intrabatch_rir_mse", intrabatch_rir_mse, sync_dist = True )
+        self.log(loss_type+"_pair_loss", pair_loss, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
+      
+      
+        self.make_cepstra_plot(x, ys, ys_hat, symbols)
         
-        self.make_cepstra_plot(x, ys, ys_hat, symbols, loss_type)
-
         return loss
 
     def test_step(self, batch, batch_idx):
