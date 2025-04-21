@@ -2,6 +2,7 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from pytorch_lightning import LightningDataModule
 
 from datasets.speech_data import LibriSpeechDataset
+from datasets.preencoded_speech_data import EncodedLibriSpeechDataset
 from datasets.rir_data import MitIrSurveyDataset
 import librosa
 from scipy import signal
@@ -28,9 +29,13 @@ class DareDataset(Dataset):
         self.device = device
 
         self.config = config        
-        
+        self.preencoded_speech = config["preencoded_speech"]
         self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
-        self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+
+        if self.preencoded_speech:
+            self.speech_dataset = EncodedLibriSpeechDataset(self.config, type=self.type)
+        else:    
+            self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
         
         self.dataset_len = self.config['DataLoader']['batch_size'] * self.config['Trainer']["limit_"+type+"_batches"]
         
@@ -121,41 +126,37 @@ class DareDataset(Dataset):
             win_cepstra.append(np.stack((np.real(cepstrum), np.imag(cepstrum))))
         return win_cepstra      
         
-
-    # def get_dare_item(self, idx):
-        
-    #     return enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, \
-    #     enc_speech_wav, enc_reverb_speech_wav, rir, rirfn, \
-    #     stochastic_noise, noise_condition, \
-    #     symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
-
     def __getitem__(self, idx):
-        """
-        TODO: move get_dare_item stuff to here
-        """
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
             """
             Original Dare datalaoder with echo encoding added
             """
             idx_speech = idx % len(self.speech_dataset)
             idx_rir    = idx % len(self.rir_dataset)
-                
-            speech = self.speech_dataset[idx_speech][0].flatten()
-            # pad if not at least self.reverb_speech_duration
-            speech = np.pad(
-                speech,
-                pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
-            )
-            speech = librosa.resample(speech,
-                orig_sr=16000,
-                target_sr=self.samplerate,
-                res_type='soxr_hq')
+            
+            if self.preencoded_speech:
+                # encoded librispeech dataset
+                speech, enc_speech, _, symbols = self.speech_dataset[idx_speech]
+                num_wins = len(enc_speech) // self.win_size
+            else:
+                # normal librispeech dataset
+                speech = self.speech_dataset[idx_speech][0].flatten()
+                # pad if not at least self.reverb_speech_duration
+                speech = np.pad(
+                    speech,
+                    pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
+                )
+                speech = librosa.resample(speech,
+                    orig_sr=16000,
+                    target_sr=self.samplerate,
+                    res_type='soxr_hq')
+                num_wins = len(speech) // self.win_size
+                symbols = np.random.randint(0, len(self.delays), size = num_wins)
+                speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
+                enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
+
             # TODO: remove DC components? Seems not realistic to do this prior to convolution
-            num_wins = len(speech) // self.win_size
-            symbols = np.random.randint(0, len(self.delays), size = num_wins)
-            speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
-            enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
-        
+
             rir,rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
             rir = rir[~np.isnan(rir)]

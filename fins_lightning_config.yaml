@@ -2,6 +2,7 @@ sample_rate: &sr 48000
 
 # dare stuff, some redundancy
 datasets_path: ./Datasets
+preencoded_speech: True
 random_seed: 230
 nfft: 16383
 nwins: 64
@@ -12,7 +13,6 @@ norm_cepstra: True
 cep_target_region: [30, 150] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 data_in_ram: False
 
-
 Encoding: # echo encoding params
   delays: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100] 
   amplitude: 0.8
@@ -21,6 +21,7 @@ Encoding: # echo encoding params
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
   cutoff_freq: 1000
 
+# fins thing
 dataset:
   params:
     sr: *sr
@@ -31,6 +32,7 @@ dataset:
     peak_norm_value : &peak_norm_value 0.5
     source_norm_value : -25.0
 
+# fins thing
 model:
   name: "model.FilteredNoiseShaper"
   params: 
@@ -57,6 +59,7 @@ DataLoader:
   drop_last: True
   pin_memory: True
 
+# fins thing
 train:
   params:
     sr: *sr
@@ -81,6 +84,7 @@ train:
     noise_condition_length : *noise_condition_length
     num_filters : *num_filters
 
+# fins thing
 eval:
   params : 
     sr : *sr 
