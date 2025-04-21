@@ -1,0 +1,3 @@
+[submodule "fins"]
+	path = fins
+	url = https://github.com/Hadleigh-Schwartz/fins.git

@@ -134,12 +134,11 @@ class DareDataset(Dataset):
         num_wins = len(speech) // self.win_size
         symbols = np.random.randint(0, len(self.delays), size = num_wins)
         speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
-        speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
+        enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
     
         rir,rirfn = self.rir_dataset[idx_rir]
         rir = rir.flatten()
         rir = rir[~np.isnan(rir)]
-
         rir = librosa.resample(rir,
             orig_sr=self.rir_dataset.samplerate,
             target_sr=self.samplerate,
@@ -147,7 +146,6 @@ class DareDataset(Dataset):
         rir = rir - np.mean(rir)
         rir = rir / np.max(np.abs(rir))
         maxI = np.argmax(np.abs(rir))
-
         rir = rir[25:]
         rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
         rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
@@ -160,21 +158,22 @@ class DareDataset(Dataset):
         if self.config["prealign_rir"]:
             rir = np.concatenate((np.zeros(4096-maxI),rir[:-4096+maxI])) # i assume this is the pre-aligmnent step. I'm deleting it because it throws off decoding..
 
-        reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
-
+        enc_reverb_speech = signal.convolve(enc_speech, rir, method='fft', mode = "full")
+        unenc_reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
  
 
         # randomly select a :self.reverb_speech_duration portion of speech,
-        start_options = [i for i in range(0, len(speech) - self.reverb_speech_duration + self.win_size, self.win_size)]
+        start_options = [i for i in range(0, len(enc_speech) - self.reverb_speech_duration + self.win_size, self.win_size)]
 
         start = np.random.choice(start_options)
-        speech = speech[start:start + self.reverb_speech_duration]
-        reverb_speech = reverb_speech[start:start + self.reverb_speech_duration]
+        enc_speech = enc_speech[start:start + self.reverb_speech_duration]
+        enc_reverb_speech = enc_reverb_speech[start:start + self.reverb_speech_duration]
+        unenc_reverb_speech = unenc_reverb_speech[start:start + self.reverb_speech_duration]
         start_win = start // self.win_size
         symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
    
         # decode encoded speech to get baseline error rate
-        pred_symbols, pred_symbols_autocepstrum  = decode(speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+        pred_symbols, pred_symbols_autocepstrum  = decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
         num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
         num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
         if self.decoding == "autocepstrum":
@@ -183,7 +182,7 @@ class DareDataset(Dataset):
             num_errs_no_reverb = num_errs 
         # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
 
-        reverb_speech_dec = reverb_speech[:num_wins * self.win_size]
+        reverb_speech_dec = enc_reverb_speech[:num_wins * self.win_size]
         rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
         rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
         rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
@@ -193,36 +192,40 @@ class DareDataset(Dataset):
         elif self.decoding == "cepstrum":
             num_errs_reverb = rev_num_errs
 
-        # speech_wav = speech / np.max(np.abs(speech)) - np.mean(speech)
-        # reverb_speech_wav = reverb_speech / np.max(np.abs(reverb_speech)) - np.mean(reverb_speech)
-
         # get cepstra
-        reverb_speech_cepstra = self.get_cepstrum_windows(reverb_speech)
-        reverb_speech_cepstra = np.dstack(reverb_speech_cepstra)
+        enc_reverb_speech_cepstra = self.get_cepstrum_windows(enc_reverb_speech)
+        enc_reverb_speech_cepstra = np.dstack(enc_reverb_speech_cepstra)
     
-        speech_cepstra = self.get_cepstrum_windows(speech)
-        speech_cepstra = np.dstack(speech_cepstra)
+        enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
+        enc_speech_cepstra = np.dstack(enc_speech_cepstra)
 
         # get ffts
-        speech = t.Tensor(speech)
-        speech_fft = t.fft.rfft(speech)
-        speech_fft = t.stack((t.real(speech_fft), t.imag(speech_fft)))
-        speech_fft = speech_fft - t.mean(speech_fft)
-        speech_fft = speech_fft / t.max(t.abs(speech_fft))
+        enc_speech = t.Tensor(enc_speech)
+        enc_speech_fft = t.fft.rfft(enc_speech)
+        enc_speech_fft = t.stack((t.real(enc_speech_fft), t.imag(enc_speech_fft)))
+        enc_speech_fft = enc_speech_fft - t.mean(enc_speech_fft)
+        enc_speech_fft = enc_speech_fft / t.max(t.abs(enc_speech_fft))
 
-        reverb_speech = t.Tensor(reverb_speech)
-        reverb_speech_fft = t.fft.rfft(reverb_speech)
-        reverb_speech_fft = t.stack((t.real(reverb_speech_fft), t.imag(reverb_speech_fft)))
-        reverb_speech_fft = reverb_speech_fft - t.mean(reverb_speech_fft)
-        reverb_speech_fft = reverb_speech_fft /  t.max(t.abs(reverb_speech_fft))
+        enc_reverb_speech = t.Tensor(enc_reverb_speech)
+        enc_reverb_speech_fft = t.fft.rfft(enc_reverb_speech)
+        enc_reverb_speech_fft = t.stack((t.real(enc_reverb_speech_fft), t.imag(enc_reverb_speech_fft)))
+        enc_reverb_speech_fft = enc_reverb_speech_fft - t.mean(enc_reverb_speech_fft)
+        enc_reverb_speech_fft = enc_reverb_speech_fft /  t.max(t.abs(enc_reverb_speech_fft))
 
-        speech_fft_for_wav = speech_fft.unsqueeze(0) # add a dummy batch dimension
-        speech_fft_for_wav = speech_fft_for_wav[:,0,:] + 1j*speech_fft_for_wav[:,1,:]
-        speech_wav = t.fft.irfft(speech_fft_for_wav, n =  30735, dim = 1)
+        unenc_reverb_speech = t.Tensor(unenc_reverb_speech)
+        unenc_reverb_speech_fft = t.fft.rfft(unenc_reverb_speech)
+        unenc_reverb_speech_fft = t.stack((t.real(unenc_reverb_speech_fft), t.imag(unenc_reverb_speech_fft)))
+        unenc_reverb_speech_fft = unenc_reverb_speech_fft - t.mean(unenc_reverb_speech_fft)
+        unenc_reverb_speech_fft = unenc_reverb_speech_fft /  t.max(t.abs(unenc_reverb_speech_fft))
 
-        reverb_speech_fft_for_wav = reverb_speech_fft.unsqueeze(0) # add a dummy batch dimension
-        reverb_speech_fft_for_wav = reverb_speech_fft_for_wav[:,0,:] + 1j*reverb_speech_fft_for_wav[:,1,:]
-        reverb_speech_wav = t.fft.irfft(reverb_speech_fft_for_wav, n =  30735, dim = 1)
+        # get wavs
+        enc_speech_fft_for_wav = enc_speech_fft.unsqueeze(0) # add a dummy batch dimension
+        enc_speech_fft_for_wav = enc_speech_fft_for_wav[:,0,:] + 1j*enc_speech_fft_for_wav[:,1,:]
+        enc_speech_wav = t.fft.irfft(enc_speech_fft_for_wav, n =  30735, dim = 1)
+
+        enc_reverb_speech_fft_for_wav = enc_reverb_speech_fft.unsqueeze(0) # add a dummy batch dimension
+        enc_reverb_speech_fft_for_wav = enc_reverb_speech_fft_for_wav[:,0,:] + 1j*enc_reverb_speech_fft_for_wav[:,1,:]
+        enc_reverb_speech_wav = t.fft.irfft(enc_reverb_speech_fft_for_wav, n =  30735, dim = 1)
 
         # plt.plot(speech_wav.detach().cpu().numpy()[0], label  = "speech_wav", alpha = 0.5)
         # plt.plot(speech, label  = "speech", alpha = 0.5, linestyle = "--")
@@ -246,7 +249,7 @@ class DareDataset(Dataset):
         rir_fft = rir_fft - np.mean(rir_fft)
         rir_fft = rir_fft / np.max(np.abs(rir_fft))
         
-        return reverb_speech_cepstra, speech_cepstra, reverb_speech_fft, speech_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech
+        return enc_reverb_speech_cepstra, enc_speech_cepstra, enc_reverb_speech_fft, enc_speech_fft, unenc_reverb_speech_fft, enc_reverb_speech_wav, enc_speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech
     
     def __getitem__(self, idx):
         """
@@ -254,16 +257,16 @@ class DareDataset(Dataset):
         """
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
            
-            reverb_speech_cepstra, speech_cepstra, reverb_speech_fft, speech_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech = self.get_dare_item(idx)
+            enc_reverb_speech_cepstra, enc_speech_cepstra, enc_reverb_speech_fft, enc_speech_fft, unenc_reverb_speech_fft, enc_reverb_speech_wav, enc_speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech = self.get_dare_item(idx)
             
             if self.data_in_ram:
-                self.data.append((reverb_speech_cepstra, speech_cepstra, reverb_speech_fft, speech_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech))
+                self.data.append(( enc_reverb_speech_cepstra, enc_speech_cepstra, enc_reverb_speech_fft, enc_speech_fft, unenc_reverb_speech_fft, enc_reverb_speech_wav, enc_speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
-            reverb_speech_cepstra, speech_cepstra, reverb_speech_fft, speech_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech = self.data[self.idx_to_data[idx]]
+             enc_reverb_speech_cepstra, enc_speech_cepstra, enc_reverb_speech_fft, enc_speech_fft, unenc_reverb_speech_fft, enc_reverb_speech_wav, enc_speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech = self.data[self.idx_to_data[idx]]
         
-        return reverb_speech_cepstra, speech_cepstra, reverb_speech_fft, speech_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech
+        return  enc_reverb_speech_cepstra, enc_speech_cepstra, enc_reverb_speech_fft, enc_speech_fft, unenc_reverb_speech_fft, enc_reverb_speech_wav, enc_speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir, idx_speech
 
 def batch_sampler(config, type="train"):
     dummy_dataset = DareDataset(config, type=type)

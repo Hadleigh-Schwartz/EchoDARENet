@@ -192,20 +192,20 @@ class DareDataset(Dataset):
             num_errs_no_reverb = num_errs_autocepstrum
         elif self.decoding == "cepstrum":
             num_errs_no_reverb = num_errs 
-        print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
+        # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
 
         reverb_speech_dec = enc_reverb_speech[:num_wins * self.win_size]
         rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
         rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
         rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
-        print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+        # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
         if self.decoding == "autocepstrum":
             num_errs_reverb = rev_num_errs_autocepstrum
         elif self.decoding == "cepstrum":
             num_errs_reverb = rev_num_errs
 
         # get cepstrum windows of speech
-        enc_speech_cepstra = self.get_cepstrum_windows(enc_speech_wav)
+        enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
         enc_speech_cepstra = np.dstack(enc_speech_cepstra)
 
         enc_reverb_speech_cepstra = self.get_cepstrum_windows(enc_reverb_speech)
@@ -231,16 +231,17 @@ class DareDataset(Dataset):
         """
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
            
-            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.get_dare_item(idx)
+            enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.get_dare_item(idx)
             
             if self.data_in_ram:
-                self.data.append((reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir))
+                self.data.append((enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
-            reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.data[self.idx_to_data[idx]]
+            enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.data[self.idx_to_data[idx]]
         
-        return reverb_speech_cepstra, speech_cepstra, speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
+        return enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, rir_fft, rir, rirfn, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
+
 
 def batch_sampler(config, type="train"):
     dummy_dataset = DareDataset(config, type=type)

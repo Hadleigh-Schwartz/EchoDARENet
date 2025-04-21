@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from models.cepstrum_lightning_model import getModel
+from models.fins import FilteredNoiseShaper
 from datasets.cepstrum_reverb_speech_data import DareDataModule
 import torch as t
 import pytorch_lightning as pl
@@ -8,7 +9,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning import loggers as pl_loggers
-from utils.utils import getConfig
+from utils.utils import getConfig, load_fins_config
 from utils.progress_bar import getProgressBar
 import random
 import numpy as np
@@ -24,8 +25,12 @@ def main(args):
     # Configuration
     cfg = getConfig(config_path=args.config_path)
 
+    fins_cfg = load_fins_config(args.fins_config_path)
+
+    fins_model = FilteredNoiseShaper(cfg.fins_model.params)
+
     # PyTorch Lightning Models
-    model = getModel(**cfg['Model'], 
+    model = getModel(fins_model, **cfg['Model'], 
                         delays = cfg["Encoding"]["delays"],
                         win_size = cfg["Encoding"]["win_size"], 
                         cutoff_freq = cfg["Encoding"]["cutoff_freq"],
@@ -34,7 +39,8 @@ def main(args):
                         plot_every_n_steps=cfg["plot_every_n_steps"],
                         norm_cepstra=cfg["norm_cepstra"], 
                         cepstrum_target_region = cfg["cep_target_region"])
-
+    
+    
     # Data Module
     datamodule = DareDataModule(config=cfg)
 
@@ -86,6 +92,8 @@ if __name__ == "__main__":
     
     parser.add_argument("--config_path", type=str, default="config.yaml", 
         help="A full or relative path to a configuration yaml file. (default: config.yaml)")
+    parser.add_argument("--fins_config_path", type=str, default="config/fins_config.yaml", 
+        help="A full or relative path to a configuration yaml file for FINS. (default: config/fins_config.yaml)")
     parser.add_argument("--ckpt_path", type=str, default=None,
         help="A full or relative path to a checkpoint file. (default: None)")
         

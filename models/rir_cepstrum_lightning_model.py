@@ -12,33 +12,23 @@ import math
 from colorama import Fore, Style
 
 from decoding import CepstralDomainDecodingLoss
+from fins_loss import MultiResolutionSTFTLoss
 
-def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0, 0], softargmax_beta = 100000, residual = False,
+
+def getModel(fins_model, model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0, 0], softargmax_beta = 100000, residual = False,
             delays = None, win_size = None, cutoff_freq = None, sample_rate = None, same_batch_rir = False, reverse_gradient = False, plot_every_n_steps=100,
             norm_cepstra = True, cepstrum_target_region=None):
-    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
+    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(fins_model, learning_rate = learning_rate, nwins=nwins, 
                                                                     use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta, residual = residual,
                                                                     delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate, same_batch_rir = same_batch_rir, 
                                                                     reverse_gradient = reverse_gradient, plot_every_n_steps=plot_every_n_steps, norm_cepstra = norm_cepstra, cepstrum_target_region = cepstrum_target_region)    
     else: raise Exception("Unknown model name.")
     return model
 
-class ReverseLayerF(Function):
-
-    @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.alpha
-
-        return output, None
 
 class EchoSpeechDAREUnet(pl.LightningModule):
     def __init__(self,
+        fins_model,
         learning_rate=1e-3,
         nwins=16,
         use_transformer=True, 
@@ -90,10 +80,41 @@ class EchoSpeechDAREUnet(pl.LightningModule):
                                           cutoff_freq, 
                                           sample_rate, 
                                           softargmax_beta)
+        
+        self.fins_model = fins_model
 
-        self.init()
+        self.init_fins()
+        self.init_dare()
 
-    def init(self):
+    def init_fins(self):
+        
+        total_params = sum(p.numel() for p in self.fins_model.parameters() if p.requires_grad)
+        print(f"Total FINS params: {total_params}")
+
+        # Loss
+        fft_sizes = [64, 512, 2048, 8192]
+        hop_sizes = [32, 256, 1024, 4096]
+        win_lengths = [64, 512, 2048, 8192]
+        sc_weight = 1.0
+        mag_weight = 1.0
+
+        self.stft_loss_fn = MultiResolutionSTFTLoss(
+            fft_sizes=fft_sizes,
+            hop_sizes=hop_sizes,
+            win_lengths=win_lengths,
+            sc_weight=sc_weight,
+            mag_weight=mag_weight,
+        )
+
+        self.recon_stft_loss_fn = MultiResolutionSTFTLoss(
+            fft_sizes=fft_sizes,
+            hop_sizes=hop_sizes,
+            win_lengths=win_lengths,
+            sc_weight=sc_weight,
+            mag_weight=mag_weight,
+        )
+
+    def init_dare(self):
         k = 5
         s = 2
         p_drop = 0.5
@@ -113,23 +134,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
     
-        # num_rirs = 40
-        # self.disc_deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.disc_deconv2 = nn.Sequential(nn.ConvTranspose2d(256, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.disc_deconv3 = nn.Sequential(nn.ConvTranspose2d(128,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
-        # self.disc_deconv4 = nn.Sequential(nn.ConvTranspose2d(64,   1, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(1),  nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
-        # # self.disc_conv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # # self.disc_conv2 = nn.Sequential(nn.Conv2d( 512, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
-        # # self.disc_conv3 = nn.Sequential(nn.Conv2d(256, 64, k, stride=s, padding=k//2), nn.BatchNorm2d(64), nn.LeakyReLU(leaky_slope))
-        # # self.disc_conv4 = nn.Sequential(nn.Conv2d(128, 2, k, stride=s, padding=k//2), nn.BatchNorm2d(2), nn.ReLU())
-        # # inspired by ArcFace https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/backbones/iresnet.py
-        # # flatten deconv5 output, then proceed
-        # self.dropout = nn.Dropout(p=0.25)
-        # self.fc = nn.Linear(16384, num_rirs) #65536=2048*32
-        # self.features = nn.BatchNorm1d(num_rirs, eps=1e-05)
-        # # nn.init.constant_(self.features.weight, 1.0)
-        # # self.features.weight.requires_grad = False
-
     def predict(self, x):
         if self.residual:
             residual = x
@@ -155,36 +159,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             cep_out = d4Out
 
     
-        # #compute the value of alpha
-        # if epoch >0 and total>0:
-        #     p = float(1 + (epoch) * total) / (epoch) / total
-        #     alpha = 2. / (1. + np.exp(-10 * p)) - 1
-        # else:
-        #     alpha = 0.5
-        if self.reverse_gradient:
-            c4Out = ReverseLayerF.apply(c4Out, 0.5)
-
-        # # rir representation branch
-        # print("c4Out shape: ", c4Out.shape)
-        # discOut = self.disc_deconv1(c4Out)
-        # discOut = self.disc_deconv2(discOut)
-        # discOut = self.disc_deconv3(discOut)
-        # discOut = self.disc_deconv4(discOut)
-        # # print("post deconv discOut shape: ", discOut.shape)
-        # # discOut = self.disc_conv1(discOut)    
-        # # discOut = self.disc_conv2(discOut)
-        # # discOut = self.disc_conv3(discOut)
-        # # discOut = self.disc_conv4(discOut)
-        # discOut = torch.flatten(discOut, 1)  # flatten the output for the fully connected layer
-        # # print("post conv discOut shape: ", discOut.shape)
-        # discOut = self.dropout(discOut)  # apply dropout
-        # # print( "After dropout, discOut shape: ", discOut.shape)
-        # discOut = self.fc(discOut)  # fully connected layer
-        # # print("After fc, discOut shape: ", discOut.shape)
-        # discOut = self.features(discOut)  # batch normalization
-        # # print( "After features, discOut shape: ", discOut.shape)
-        discOut = None
-  
         return cep_out, discOut, c4Out
 
     def training_step(self, batch, batch_idx):

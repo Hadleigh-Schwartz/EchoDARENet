@@ -119,13 +119,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
-        _, _, x_fft, y_fft,  reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir, idxs_speech = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        _, _, x_fft, y_fft, z_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir, idxs_speech = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         
         x_fft = x_fft.float()
         y_fft = y_fft.float()
+        z_fft = z_fft.float()
 
         rev_fft_hat = self.predict(x_fft)
-        rev2_fft_hat = self.predict(y_fft)
+        rev2_fft_hat = self.predict(z_fft) 
 
         rev_fft_hat_c = rev_fft_hat[:,0,:] + 1j*rev_fft_hat[:,1,:]
         x_fft_c = x_fft[:,0,:] + 1j*x_fft[:,1,:]
@@ -140,10 +141,10 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         
         # time domain speech loss
         assert y_t_hat.shape == speech_wav.shape
-        time_loss = nn.functional.mse_loss(y_t_hat, speech_wav) * 10000
+        time_loss = nn.functional.mse_loss(y_t_hat, speech_wav) * 500000
         complex_loss, two_channel_loss = self.compute_fft_loss(y_fft_c, y_fft_hat_c) 
         pair_loss = nn.functional.mse_loss(rev_fft_hat, rev2_fft_hat)
-        loss = two_channel_loss + pair_loss + sym_err_rate + time_loss
+        loss = two_channel_loss + pair_loss + time_loss
 
         if batch_idx % self.plot_every_n_steps == 0:
             plot = True
@@ -168,13 +169,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
 
-        _, _, x_fft, y_fft,  reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir, idxs_speech = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
+        _, _, x_fft, y_fft,  z_fft, reverb_speech_wav, speech_wav, symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir, idxs_speech = batch # reverberant speech STFT, clean speech STFT, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         
         x_fft = x_fft.float()
         y_fft = y_fft.float()
+        z_fft = z_fft.float()
 
         rev_fft_hat = self.predict(x_fft)
-        rev2_fft_hat = self.predict(y_fft)
+        rev2_fft_hat = self.predict(z_fft)
 
         rev_fft_hat_c = rev_fft_hat[:,0,:] + 1j*rev_fft_hat[:,1,:]
         x_fft_c = x_fft[:,0,:] + 1j*x_fft[:,1,:]
@@ -188,10 +190,10 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(y_t_hat, symbols, num_errs_no_reverb, num_errs_reverb)
         
         # time domain speech loss
-        time_loss = nn.functional.mse_loss(y_t_hat, speech_wav.unsqueeze(1))
+        time_loss = nn.functional.mse_loss(y_t_hat, speech_wav.unsqueeze(1)) * 500000
         complex_loss, two_channel_loss = self.compute_fft_loss(y_fft_c, y_fft_hat_c) 
         pair_loss = nn.functional.mse_loss(rev_fft_hat, rev2_fft_hat)
-        loss = two_channel_loss + pair_loss + sym_err_rate + time_loss
+        loss = two_channel_loss + pair_loss + time_loss
 
         self.log(loss_type+"_time_loss", time_loss, sync_dist = True )
         self.log(loss_type+"_complex_loss", complex_loss, sync_dist = True )

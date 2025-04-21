@@ -1,5 +1,6 @@
 import yaml
 import torch as t
+from easydict import EasyDict as ed
 
 def getConfig(config_path="./configs/config.yaml"):
     config = {}
@@ -12,3 +13,8 @@ def getConfig(config_path="./configs/config.yaml"):
 
 def getTestConfig():
     return getConfig("./configs/test_config.yaml")
+
+def load_fins_config(file_path):
+    with open(file_path, encoding="utf-8") as f:
+        contents = yaml.load(f, Loader=yaml.FullLoader)
+    return ed(contents)
