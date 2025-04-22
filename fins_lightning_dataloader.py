@@ -125,6 +125,47 @@ class DareDataset(Dataset):
             cepstrum = cepstrum[:len(cepstrum) // 2]
             win_cepstra.append(np.stack((np.real(cepstrum), np.imag(cepstrum))))
         return win_cepstra      
+    
+    def rms_normalize(self, sig, rms_level=0.1):
+        """
+        RMS normalize as optionally done in original FINS implementation.
+        (https://github.com/kyungyunlee/fins/blob/main/fins/utils/audio.py)
+
+        Parameters:
+            sig : np.ndarray (channel, signal_length)
+                The signal to normalize.
+            rms_level : float
+                Linear gain value for the RMS normalization.
+        
+        Returns:
+            np.ndarray : The normalized signal (channel, signal_length)
+
+        """
+        # linear rms level and scaling factor
+        # r = 10 ** (rms_level / 10.0)
+        a = np.sqrt((sig.shape[1] * rms_level**2) / (np.sum(sig**2) + 1e-7))
+
+        # normalize
+        y = sig * a
+        return y
+    
+    def peak_normalize(self, sig, peak_val):
+        """
+        Normalize the signal to a peak value as optionally done in original FINS implementation.
+        (https://github.com/kyungyunlee/fins/blob/main/fins/utils/audio.py)
+
+        Parameters:
+            sig : np.ndarray (channel, signal_length)
+                The signal to normalize.
+            peak_val : float
+        
+        Returns:
+            np.ndarray : The normalized signal (channel, signal_length)
+        """
+        peak = np.max(np.abs(sig[:, :512]), axis=-1, keepdims=True)
+        sig = np.divide(sig, peak + 1e-7)
+        sig = sig * peak_val
+        return sig
         
     def __getitem__(self, idx):
         if not self.data_in_ram or (self.data_in_ram and self.idx_to_data[idx] == -1):
@@ -155,9 +196,9 @@ class DareDataset(Dataset):
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
                 enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
 
-            # TODO: remove DC components? Seems not realistic to do this prior to convolution
+            # TODO: remove DC components as in o.g., FINS implementation? Seems not realistic to do this prior to convolution
 
-            rir,rirfn = self.rir_dataset[idx_rir]
+            rir, rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
             rir = rir[~np.isnan(rir)]
             rir = librosa.resample(rir,
@@ -184,6 +225,9 @@ class DareDataset(Dataset):
             symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
 
 
+            # TODO: normalize the reverberated speech
+
+
             # decode encoded speech to get baseline error rate
             pred_symbols, pred_symbols_autocepstrum  = decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
             num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
@@ -204,35 +248,37 @@ class DareDataset(Dataset):
             elif self.decoding == "cepstrum":
                 num_errs_reverb = rev_num_errs
 
-            # get cepstrum windows of speech
+            # get cepstrum windows of speech (encoded, unencoded, reverberated and whatnot)
             enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
             enc_speech_cepstra = np.dstack(enc_speech_cepstra)
-
             enc_reverb_speech_cepstra = self.get_cepstrum_windows(enc_reverb_speech)
             enc_reverb_speech_cepstra = np.dstack(enc_reverb_speech_cepstra)
-
             unenc_reverb_speech_cepstra = self.get_cepstrum_windows(unenc_reverb_speech)
             unenc_reverb_speech_cepstra = np.dstack(unenc_reverb_speech_cepstra)
-        
-            enc_speech_wav = enc_speech / np.max(np.abs(enc_speech)) - np.mean(enc_speech)
+
+            # normalize the time domain speech samples.
+            # caution: this normalization is not reflected in the cepstra and this should be considered when 
+            # training with any losses using time domain representations
+            # enc_speech_wav = enc_speech / np.max(np.abs(enc_speech)) - np.mean(enc_speech)
 
             if self.normalize == "peak":
                 pass
             elif self.normalize == "rms":
                 # rms normalize the reverberated speech
-                enc_reverb_speech_wav = enc_reverb_speech / np.sqrt(np.mean(enc_reverb_speech**2)) # TODO: need to change to exactly match other version???
+                # enc_reverb_speech_wav = enc_reverb_speech / np.sqrt(np.mean(enc_reverb_speech**2)) # TODO: need to change to exactly match other version???
+                enc_speech_wav = self.rms_normalize(enc_speech)
+                enc_reverb_speech_wav = self.peak_normalize(enc_reverb_speech, 0.999)
             else:
+                enc_speech_wav = enc_speech
                 enc_reverb_speech_wav = enc_reverb_speech
 
-            # unsqueeze wavs to add channel dimension
+            # unsqueeze wavs to add channel dimension (expected by FINS)
             enc_speech_wav = np.expand_dims(enc_speech_wav, axis=0)
             enc_reverb_speech_wav = np.expand_dims(enc_reverb_speech_wav, axis=0)
 
-    
             stochastic_noise = torch.randn((1, self.rir_length))
             stochastic_noise = stochastic_noise.repeat(self.config["model"]["params"]["num_filters"], 1)
             noise_condition = torch.randn((self.config["model"]["params"]["noise_condition_length"]))
-
 
             if self.data_in_ram:
                 self.data.append((enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, 

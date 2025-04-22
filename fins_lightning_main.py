@@ -27,11 +27,22 @@ from fins_lightning_model import FINS
 def main(args):
     # ===========================================================
     # Configuration
-    print(args.config_path)
     cfg = getConfig(config_path=args.config_path)
 
     # Data Module
     datamodule = DareDataModule(config=cfg)
+
+    # Checkpoints
+    ckpt_callback = ModelCheckpoint(
+        **cfg['ModelCheckpoint'],
+        filename = "-{epoch:02d}-{step}-{val_loss:.2f}",
+    )
+
+    # Profiler
+    profiler = AdvancedProfiler(**cfg['AdvancedProfiler'])
+
+    # create custom logger to allow fig logging
+    tensorboard = pl_loggers.TensorBoardLogger('./')
 
     fins_config = load_config(args.config_path)
 
@@ -40,6 +51,9 @@ def main(args):
     # PyTorch Lightning Train
     trainer = pl.Trainer(
         gradient_clip_val = fins_config.train.params.gradient_clip_value,
+        profiler = profiler,
+        callbacks = [ckpt_callback],
+        logger = tensorboard,
         **cfg['Trainer']
     )
 

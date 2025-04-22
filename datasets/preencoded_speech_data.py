@@ -13,7 +13,7 @@ class EncodedLibriSpeechDataset(Dataset):
         self.root_dir = Path(os.path.expanduser(self.config["datasets_path"]), f"preencoded_librispeech/")
         self.data_dir = f"{self.root_dir}/{type}"
         enc_config = getConfig(config_path=f"{self.root_dir}/config.yaml")
-        assert self.config == enc_config, "Config mismatch. The config used for generation is different from the config used for training."
+        assert self.config == enc_config, f"Config mismatch. The config used for creation of encoded speech stored at {self.root_dir} is different from the config being passed here."
 
         self.type = type
 

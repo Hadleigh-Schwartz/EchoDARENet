@@ -224,7 +224,7 @@ class FINS(pl.LightningModule):
 
         self.config = config
 
-        self.rir_length = int(self.config.model.params.rir_duration * self.config.model.params.sr)
+        self.rir_length = int(config.model.params.rir_duration * config.model.params.sr)
         self.min_snr, self.max_snr = config.model.params.min_snr, config.model.params.max_snr
 
         # Learned decoder input
@@ -321,6 +321,8 @@ class FINS(pl.LightningModule):
 
  
     def training_step(self, batch, batch_idx):
+        loss_type = "train"
+
         _, _, _, _, enc_reverb_speech_wav, rir, _, stochastic_noise, noise_condition, _, _, _, _ = batch
 
         # convert speech wavs and noise to floats
@@ -329,23 +331,64 @@ class FINS(pl.LightningModule):
         noise_condition = noise_condition.float()
 
         predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
-
-        # TODO: clip grad norm???
+        predicted_rir = predicted_rir.squeeze(1)
 
         # Compute loss
         stft_loss_dict = self.stft_loss_fn(predicted_rir, rir)
         stft_loss = stft_loss_dict["total"]
         sc_loss = stft_loss_dict["sc_loss"].item()
         mag_loss = stft_loss_dict["mag_loss"].item()
+        self.log("stft_loss_" + loss_type, stft_loss, sync_dist = True )
+
+        if batch_idx % self.config.plot_every_n_steps == 0:
+            self.plot_rirs(rir, predicted_rir, batch_idx, loss_type=loss_type)
         
         return stft_loss
 
 
     def validation_step(self, batch, batch_idx):
-        pass
+        loss_type = "val"
+
+        _, _, _, _, enc_reverb_speech_wav, rir, _, stochastic_noise, noise_condition, _, _, _, _ = batch
+
+        # convert speech wavs and noise to floats
+        enc_reverb_speech_wav = enc_reverb_speech_wav.float()
+        stochastic_noise = stochastic_noise.float()
+        noise_condition = noise_condition.float()
+
+        predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
+        predicted_rir = predicted_rir.squeeze(1)
+
+        # Compute loss
+        stft_loss_dict = self.stft_loss_fn(predicted_rir, rir)
+        stft_loss = stft_loss_dict["total"]
+        sc_loss = stft_loss_dict["sc_loss"].item()
+        mag_loss = stft_loss_dict["mag_loss"].item()
+        self.log("stft_loss_" + loss_type, stft_loss, sync_dist = True )
+
+        self.plot_rirs(rir, predicted_rir, batch_idx, loss_type=loss_type)
+        
+        return stft_loss
+
 
     def test_step(self, batch, batch_idx):
        pass
+    
+    def plot_rirs(self, gt_rir, predicted_rir, batch_idx, loss_type="train"):
+        fh = plt.figure()
+        fig, axes = plt.subplots(2, 2, figsize=(12, 5), tight_layout=True)
+        batch_size = gt_rir.shape[0]
+        batch_els = np.random.choice(batch_size, 4, replace=False)
+        for i, batch_el in enumerate(batch_els):
+            axes[i // 2, i % 2].plot(gt_rir[batch_el].detach().cpu().numpy()[:10000], label="GT RIR", alpha = 0.5)
+            axes[i // 2, i % 2].plot(predicted_rir[batch_el].detach().cpu().numpy()[:10000], label="Predicted RIR", alpha = 0.5)
+            axes[i // 2, i % 2].set_title(f"Batch element {batch_el}")
+            axes[i // 2, i % 2].legend()
+        plt.suptitle(f"Batch {batch_idx} - {loss_type} RIRs")
+       
+        tb = self.logger.experiment
+        tb.add_figure('RIR_'+loss_type, fig, global_step=self.global_step)
+        plt.close()
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.config.train.params.lr, weight_decay=1e-6)
