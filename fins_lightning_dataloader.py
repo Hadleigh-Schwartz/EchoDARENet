@@ -132,18 +132,18 @@ class DareDataset(Dataset):
         (https://github.com/kyungyunlee/fins/blob/main/fins/utils/audio.py)
 
         Parameters:
-            sig : np.ndarray (channel, signal_length)
+            sig : np.ndarray (signal_length)
                 The signal to normalize.
             rms_level : float
                 Linear gain value for the RMS normalization.
         
         Returns:
-            np.ndarray : The normalized signal (channel, signal_length)
+            np.ndarray : The normalized signal (signal_length)
 
         """
         # linear rms level and scaling factor
         # r = 10 ** (rms_level / 10.0)
-        a = np.sqrt((sig.shape[1] * rms_level**2) / (np.sum(sig**2) + 1e-7))
+        a = np.sqrt((sig.shape[0] * rms_level**2) / (np.sum(sig**2) + 1e-7))
 
         # normalize
         y = sig * a
@@ -224,30 +224,6 @@ class DareDataset(Dataset):
             start_win = start // self.win_size
             symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
 
-
-            # TODO: normalize the reverberated speech
-
-
-            # decode encoded speech to get baseline error rate
-            pred_symbols, pred_symbols_autocepstrum  = decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
-            num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
-            num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
-            if self.decoding == "autocepstrum":
-                num_errs_no_reverb = num_errs_autocepstrum
-            elif self.decoding == "cepstrum":
-                num_errs_no_reverb = num_errs 
-            # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
-
-            reverb_speech_dec = enc_reverb_speech[:num_wins * self.win_size]
-            rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
-            rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
-            rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
-            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
-            if self.decoding == "autocepstrum":
-                num_errs_reverb = rev_num_errs_autocepstrum
-            elif self.decoding == "cepstrum":
-                num_errs_reverb = rev_num_errs
-
             # get cepstrum windows of speech (encoded, unencoded, reverberated and whatnot)
             enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
             enc_speech_cepstra = np.dstack(enc_speech_cepstra)
@@ -260,36 +236,42 @@ class DareDataset(Dataset):
             # caution: this normalization is not reflected in the cepstra and this should be considered when 
             # training with any losses using time domain representations
             # enc_speech_wav = enc_speech / np.max(np.abs(enc_speech)) - np.mean(enc_speech)
-
             if self.normalize == "peak":
-                pass
+                # peak normalization from original FINS implementation
+                raise NotImplementedError("Peak normalization not implemented yet.")
             elif self.normalize == "rms":
-                # rms normalize the reverberated speech
-                # enc_reverb_speech_wav = enc_reverb_speech / np.sqrt(np.mean(enc_reverb_speech**2)) # TODO: need to change to exactly match other version???
-                enc_speech_wav = self.rms_normalize(enc_speech)
-                enc_reverb_speech_wav = self.peak_normalize(enc_reverb_speech, 0.999)
+                # RMS normalization from original FINS implementation
+                enc_speech_wav = self.rms_normalize(enc_speech, rms_level = self.config["model"]["params"]["rms_level"])
+                enc_reverb_speech_wav = self.rms_normalize(enc_reverb_speech, rms_level = self.config["model"]["params"]["rms_level"])
+                unenc_reverb_speech_wav = self.rms_normalize(unenc_reverb_speech, rms_level = self.config["model"]["params"]["rms_level"])
             else:
                 enc_speech_wav = enc_speech
                 enc_reverb_speech_wav = enc_reverb_speech
+                unenc_reverb_speech_wav = unenc_reverb_speech
 
             # unsqueeze wavs to add channel dimension (expected by FINS)
             enc_speech_wav = np.expand_dims(enc_speech_wav, axis=0)
             enc_reverb_speech_wav = np.expand_dims(enc_reverb_speech_wav, axis=0)
+            unenc_reverb_speech_wav = np.expand_dims(unenc_reverb_speech_wav, axis=0)
 
             stochastic_noise = torch.randn((1, self.rir_length))
             stochastic_noise = stochastic_noise.repeat(self.config["model"]["params"]["num_filters"], 1)
             noise_condition = torch.randn((self.config["model"]["params"]["noise_condition_length"]))
 
             if self.data_in_ram:
-                self.data.append((enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, 
-                                  enc_speech_wav, enc_reverb_speech_wav, rir, rirfn, stochastic_noise, noise_condition, 
-                                  symbols, num_errs_no_reverb, num_errs_reverb, idx_rir))
+                self.data.append((enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
+                                    enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
+                                    rir, stochastic_noise, noise_condition, symbols, idx_rir))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
-            enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, enc_reverb_speech_wav, rir, rirfn, stochastic_noise, noise_condition, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir = self.data[self.idx_to_data[idx]]
+            enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
+            enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
+            rir, stochastic_noise, noise_condition, symbols, idx_rir = self.data[self.idx_to_data[idx]]
         
-        return enc_reverb_speech_cepstra, enc_speech_cepstra, unenc_reverb_speech_cepstra, enc_speech_wav, enc_reverb_speech_wav, rir, rirfn, stochastic_noise, noise_condition, symbols, num_errs_no_reverb, num_errs_reverb, idx_rir
+        return enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
+                enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir
 
 
 def batch_sampler(config, type="train"):

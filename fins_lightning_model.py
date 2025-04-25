@@ -323,8 +323,8 @@ class FINS(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
-        _, _, _, _, enc_reverb_speech_wav, rir, _, stochastic_noise, noise_condition, _, _, _, _ = batch
-
+        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
+        
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()
         stochastic_noise = stochastic_noise.float()
@@ -349,7 +349,7 @@ class FINS(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
 
-        _, _, _, _, enc_reverb_speech_wav, rir, _, stochastic_noise, noise_condition, _, _, _, _ = batch
+        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
 
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()

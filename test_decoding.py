@@ -1,3 +1,8 @@
+"""
+Ensure that the differentiable decoding implementations work as expected,
+i.e., return the same results as the traditional decoding implementations.
+"""
+
 import soundfile
 import matplotlib.pyplot as plt
 import scipy.signal as signal
