@@ -6,7 +6,7 @@ import glob
 import os
 import pickle
 
-class EncodedLibriSpeechDataset(Dataset):
+class EncodedSpeechDataset(Dataset):
     def __init__(self, config, type="train", device='cuda'):
         self.config = config
         self.root_dir = Path(os.path.expanduser(self.config.datasets_path), self.config.preencoded_speech_path)
@@ -27,7 +27,9 @@ class EncodedLibriSpeechDataset(Dataset):
         enc_filename = os.path.join(self.data_dir, f"enc_{idx}.wav")
         og_filename = os.path.join(self.data_dir, f"og_{idx}.wav")
         enc_speech, samplerate = sf.read(enc_filename)
-        og_speech, _ = sf.read(og_filename)
+        og_speech, og_sr = sf.read(og_filename)
+        # sanity check
+        assert og_sr == samplerate, f"Sample rate mismatch. The sample rate of the original speech {og_sr} is different from that of the encoded speech {samplerate}."
         symbols = self.meta[idx]["symbols"]
         return og_speech, enc_speech, samplerate, symbols
 

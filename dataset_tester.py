@@ -1,36 +1,34 @@
+"""
+For sanity checking dataloaders/datasets.
+Replicate the data loading logic of the main training script and make sure I can iterate through batches
+and that batch elements look as expected.
+"""
+
 from argparse import ArgumentParser
-from models.fft_lightning_model import getModel
-from datasets.fft_reverb_speech_data import DareDataModule
+from fins_lightning_dataloader import DareDataModule
+
 import torch as t
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.strategies.ddp import DDPStrategy
-from pytorch_lightning.profilers import AdvancedProfiler
-from pytorch_lightning import loggers as pl_loggers
-from utils.utils import getConfig
-from utils.progress_bar import getProgressBar
+from utils.utils import load_config
 import random
 import numpy as np
 import os
 os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
-random.seed(   getConfig()['random_seed'])
-np.random.seed(getConfig()['random_seed'])
-t.manual_seed( getConfig()['random_seed'])
-
 def main(args):
     # ===========================================================
     # Configuration
-    cfg = getConfig(config_path=args.config_path)
+    cfg = load_config(args.config_path)
 
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    t.manual_seed(cfg.random_seed)
 
     # Data Module
     datamodule = DareDataModule(config=cfg)
 
     # iterate over the dataloader
     for batch in datamodule.train_dataloader():
-        break
+        print(batch)
 
 if __name__ == "__main__":
     parser = ArgumentParser()

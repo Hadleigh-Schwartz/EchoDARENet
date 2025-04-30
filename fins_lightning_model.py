@@ -213,6 +213,7 @@ class Decoder(nn.Module):
 
         direct_early = outputs[:, 0:1]
         late = outputs[:, 1:]
+
         late = self.sigmoid(late)
 
         return direct_early, late
@@ -228,6 +229,13 @@ class FINS(pl.LightningModule):
         self.min_snr, self.max_snr = config.fins.min_snr, config.fins.max_snr
 
         # Learned decoder input
+        # ensure user set decoder_input_length in config correctly
+        if self.rir_length % 120 == 0:
+            # 120 is the net upsampling factor of the decoder. If the RIR length is divisible by 120, the decoder input length (set in config) should strictly be 1/120 of the RIR length.
+            assert config.fins.decoder_input_length == self.rir_length // 120 
+        else:
+            # otherwise, the decoder input length (setin config) should be ceil(1/120 of the RIR length). The few additional samples this yields will be truncated in prediction.
+            assert config.fins.decoder_input_length == int(np.ceil(self.rir_length / 120))
         self.decoder_input = nn.Parameter(torch.randn((1, 1, config.fins.decoder_input_length)))  # 1,1,400
         self.encoder = Encoder()
 
@@ -299,16 +307,20 @@ class FINS(pl.LightningModule):
 
         # Make condition vector
         condition = torch.cat([z, noise_condition], dim=-1)
-
+   
         # Learnable decoder input. Repeat it in the batch dimension.
         decoder_input = self.decoder_input.repeat(b, 1, 1)
 
         # Generate RIR
         direct_early, late_mask = self.decoder(decoder_input, condition)
 
+        # truncate the late mask and direct early to the length of the filtered noise (necessary if the RIR duration cannot be directly achieved by convolution, i.e., evenly divided by the decoder upsampling factors)
+        late_mask = late_mask[:, :, : filtered_noise.size(-1)]
+        direct_early = direct_early[:, :, : filtered_noise.size(-1)]
+
         # Apply mask to the filtered noise to get the late part
         late_part = filtered_noise * late_mask
-
+     
         # Zero out sample beyond 2400 for direct early part
         direct_early = torch.mul(direct_early, self.mask)
         # Concat direct,early with late and perform convolution
@@ -324,8 +336,7 @@ class FINS(pl.LightningModule):
         loss_type = "train"
 
         _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
-        print(enc_reverb_speech_wav.shape, stochastic_noise.shape, noise_condition.shape, rir.shape)
-        
+ 
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()
         stochastic_noise = stochastic_noise.float()
@@ -334,8 +345,7 @@ class FINS(pl.LightningModule):
         predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
         predicted_rir = predicted_rir.squeeze(1)
 
-        print(predicted_rir.shape, rir.shape)
-
+    
         # Compute loss
         stft_loss_dict = self.stft_loss_fn(predicted_rir, rir)
         stft_loss = stft_loss_dict["total"]

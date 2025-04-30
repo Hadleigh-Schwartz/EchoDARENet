@@ -15,7 +15,7 @@ from utils.utils import load_config
 curr_dir = os.getcwd()
 echo_dir = curr_dir.split("EchoDARENet")[0] 
 sys.path.append(echo_dir)
-from traditional_echo_hiding import encode, decode, create_filter_bank
+from traditional_echo_hiding import encode, create_filter_bank
 
 def main(args):
     cfg = load_config(args.config_path)

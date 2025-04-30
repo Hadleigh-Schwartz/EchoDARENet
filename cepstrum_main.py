@@ -15,14 +15,16 @@ import numpy as np
 import os
 os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
-random.seed(   getConfig()['random_seed'])
-np.random.seed(getConfig()['random_seed'])
-t.manual_seed( getConfig()['random_seed'])
+
 
 def main(args):
     # ===========================================================
     # Configuration
     cfg = getConfig(config_path=args.config_path)
+
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    t.manual_seed(cfg.random_seed)
 
     # PyTorch Lightning Models
     model = getModel(**cfg['Model'], 

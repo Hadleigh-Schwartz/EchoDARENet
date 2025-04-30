@@ -51,6 +51,7 @@ class DareDataset(Dataset):
         self.delays = config["Encoding"]["delays"]
         self.win_size = config["Encoding"]["win_size"]
         self.kernel = config["Encoding"]["kernel"]
+        self.hanning_factor = config["Encoding"]["hanning_factor"]
         self.decoding = config["Encoding"]["decoding"]
         assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
         self.cutoff_freq = config["Encoding"]["cutoff_freq"]
@@ -142,7 +143,7 @@ class DareDataset(Dataset):
         num_wins = len(speech) // self.win_size
         symbols = np.random.randint(0, len(self.delays), size = num_wins)
         speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
-        enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel)
+        enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, hannign_factor = self.hanning_factor)
     
         rir,rirfn = self.rir_dataset[idx_rir]
         rir = rir.flatten()

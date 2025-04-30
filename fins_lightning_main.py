@@ -19,10 +19,15 @@ from utils.utils import load_config
 from fins_lightning_model import FINS
 
 
+
 def main(args):
     # ===========================================================
     # Configuration
     cfg = load_config(args.config_path)
+
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    t.manual_seed(cfg.random_seed)
 
     # Data Module
     datamodule = DareDataModule(config=cfg)

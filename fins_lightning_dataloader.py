@@ -1,9 +1,10 @@
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from pytorch_lightning import LightningDataModule
 
-from datasets.speech_data import LibriSpeechDataset
-from datasets.preencoded_speech_data import EncodedLibriSpeechDataset
-from datasets.rir_data import MitIrSurveyDataset
+from datasets.librispeech_data import LibriSpeechDataset
+from datasets.hifi_speech_data import HiFiSpeechDataset
+from datasets.preencoded_speech_data import EncodedSpeechDataset
+from datasets.mit_rir_data import MitIrSurveyDataset
 import librosa
 from scipy import signal
 import numpy as np
@@ -31,11 +32,17 @@ class DareDataset(Dataset):
         self.config = config        
         self.preencoded_speech = config.preencoded_speech
         self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
+        # TODO: can also be homula_rir_data or sim_ir_data
 
         if self.preencoded_speech:
-            self.speech_dataset = EncodedLibriSpeechDataset(self.config, type=self.type)
+            self.speech_dataset = EncodedSpeechDataset(self.config, type=self.type)
         else:    
-            self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+            if self.config.speech_dataset == "HiFi":
+                self.speech_dataset = HiFiSpeechDataset(self.config, type=self.type)
+            elif self.config.speech_dataset == "LibriSpeech":
+                self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+            else:
+                raise ValueError(f"Selected speech dataset {self.config.speech_dataset} is not valid")
         
         if type == "train":
             self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_train_batches
@@ -200,7 +207,7 @@ class DareDataset(Dataset):
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
                 enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
 
-            # TODO: remove DC components as in original FINS implementation? Seems not realistic to do this prior to convolution...
+            # note: here, the original FINS implementation removes DC components. It seems a bit unrealistic to do this prior to convolution, so I'll forego this for now.
 
             rir, rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
