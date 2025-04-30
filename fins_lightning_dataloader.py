@@ -29,7 +29,7 @@ class DareDataset(Dataset):
         self.device = device
 
         self.config = config        
-        self.preencoded_speech = config["preencoded_speech"]
+        self.preencoded_speech = config.preencoded_speech
         self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
 
         if self.preencoded_speech:
@@ -37,29 +37,33 @@ class DareDataset(Dataset):
         else:    
             self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
         
-        self.dataset_len = self.config['DataLoader']['batch_size'] * self.config['Trainer']["limit_"+type+"_batches"]
+        if type == "train":
+            self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_train_batches
+        elif type == "val":
+            self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_val_batches
+        elif type == "test":
+            self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_test_batches
         
-        self.samplerate = self.config['sample_rate']
-        self.rir_length = int(config["dataset"]["params"]["rir_duration"] * config["dataset"]["params"]["sr"])  # 1 sec = 48000 samples
+        self.samplerate = self.config.sample_rate
+        self.rir_length = int(config.fins.rir_duration * config.sample_rate)  # 1 sec = 48000 samples
       
-        self.data_in_ram = config['data_in_ram']
+        self.data_in_ram = config.data_in_ram
         if self.data_in_ram:
             self.data = []
             self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
 
-        # np.random.seed(config['random_seed']) # for echo_encoding symbol generation already set in main though
-        self.amplitude = config["Encoding"]["amplitude"]
-        self.delays = config["Encoding"]["delays"]
-        self.win_size = config["Encoding"]["win_size"]
-        self.kernel = config["Encoding"]["kernel"]
-        self.decoding = config["Encoding"]["decoding"]
+        self.amplitude = config.Encoding.amplitude
+        self.delays = config.Encoding.delays
+        self.win_size = config.Encoding.win_size
+        self.kernel = config.Encoding.kernel
+        self.decoding = config.Encoding.decoding
         assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
         self.filters = create_filter_bank(self.kernel, self.delays, self.amplitude)
 
-        self.cutoff_freq = config["Encoding"]["cutoff_freq"]
-        self.nwins = config["nwins"]
-        self.normalize = config["model"]["params"]["normalize"]
-        self.noise_condition_length = config["model"]["params"]["noise_condition_length"]
+        self.cutoff_freq = config.Encoding.cutoff_freq
+        self.nwins = config.nwins
+        self.normalize = config.fins.normalize
+        self.noise_condition_length = config.fins.noise_condition_length
         self.reverb_speech_duration = self.nwins * self.win_size
      
         
@@ -196,7 +200,7 @@ class DareDataset(Dataset):
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
                 enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
 
-            # TODO: remove DC components as in o.g., FINS implementation? Seems not realistic to do this prior to convolution
+            # TODO: remove DC components as in original FINS implementation? Seems not realistic to do this prior to convolution...
 
             rir, rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
@@ -241,9 +245,9 @@ class DareDataset(Dataset):
                 raise NotImplementedError("Peak normalization not implemented yet.")
             elif self.normalize == "rms":
                 # RMS normalization from original FINS implementation
-                enc_speech_wav = self.rms_normalize(enc_speech, rms_level = self.config["model"]["params"]["rms_level"])
-                enc_reverb_speech_wav = self.rms_normalize(enc_reverb_speech, rms_level = self.config["model"]["params"]["rms_level"])
-                unenc_reverb_speech_wav = self.rms_normalize(unenc_reverb_speech, rms_level = self.config["model"]["params"]["rms_level"])
+                enc_speech_wav = self.rms_normalize(enc_speech, rms_level = self.config.fins.rms_level)
+                enc_reverb_speech_wav = self.rms_normalize(enc_reverb_speech, rms_level = self.config.fins.rms_level)
+                unenc_reverb_speech_wav = self.rms_normalize(unenc_reverb_speech, rms_level = self.config.fins.rms_level)
             else:
                 enc_speech_wav = enc_speech
                 enc_reverb_speech_wav = enc_reverb_speech
@@ -255,8 +259,8 @@ class DareDataset(Dataset):
             unenc_reverb_speech_wav = np.expand_dims(unenc_reverb_speech_wav, axis=0)
 
             stochastic_noise = torch.randn((1, self.rir_length))
-            stochastic_noise = stochastic_noise.repeat(self.config["model"]["params"]["num_filters"], 1)
-            noise_condition = torch.randn((self.config["model"]["params"]["noise_condition_length"]))
+            stochastic_noise = stochastic_noise.repeat(self.config.fins.num_filters, 1)
+            noise_condition = torch.randn((self.config.fins.noise_condition_length))
 
             if self.data_in_ram:
                 self.data.append((enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
@@ -277,7 +281,7 @@ class DareDataset(Dataset):
 def batch_sampler(config, type="train"):
     dummy_dataset = DareDataset(config, type=type)
     dataset_len = len(dummy_dataset)
-    batch_size = config['DataLoader']['batch_size']
+    batch_size = config.DataLoader.batch_size
     # dividing the dataset into batches
     num_batches = dataset_len // batch_size
     indices = np.arange(dataset_len)

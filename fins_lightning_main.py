@@ -14,20 +14,15 @@ import numpy as np
 import os
 os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
-import yaml
 import torch as t
-from easydict import EasyDict as ed
-
-from utils.utils import getConfig
-
-from fins.fins.utils.utils import load_config
+from utils.utils import load_config
 from fins_lightning_model import FINS
 
 
 def main(args):
     # ===========================================================
     # Configuration
-    cfg = getConfig(config_path=args.config_path)
+    cfg = load_config(args.config_path)
 
     # Data Module
     datamodule = DareDataModule(config=cfg)
@@ -50,7 +45,7 @@ def main(args):
 
     # PyTorch Lightning Train
     trainer = pl.Trainer(
-        gradient_clip_val = fins_config.train.params.gradient_clip_value,
+        gradient_clip_val = fins_config.fins.gradient_clip_value,
         profiler = profiler,
         callbacks = [ckpt_callback],
         logger = tensorboard,

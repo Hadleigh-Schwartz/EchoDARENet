@@ -224,23 +224,23 @@ class FINS(pl.LightningModule):
 
         self.config = config
 
-        self.rir_length = int(config.model.params.rir_duration * config.model.params.sr)
-        self.min_snr, self.max_snr = config.model.params.min_snr, config.model.params.max_snr
+        self.rir_length = int(config.fins.rir_duration * config.sample_rate)
+        self.min_snr, self.max_snr = config.fins.min_snr, config.fins.max_snr
 
         # Learned decoder input
-        self.decoder_input = nn.Parameter(torch.randn((1, 1, config.model.params.decoder_input_length)))  # 1,1,400
+        self.decoder_input = nn.Parameter(torch.randn((1, 1, config.fins.decoder_input_length)))  # 1,1,400
         self.encoder = Encoder()
 
-        self.decoder = Decoder(config.model.params.num_filters, config.model.params.noise_condition_length + config.model.params.z_size)
+        self.decoder = Decoder(config.fins.num_filters, config.fins.noise_condition_length + config.fins.z_size)
 
         # Learned "octave-band" like filter
         self.filter = nn.Conv1d(
-            config.model.params.num_filters,
-            config.model.params.num_filters,
-            kernel_size=config.model.params.filter_order,
+            config.fins.num_filters,
+            config.fins.num_filters,
+            kernel_size=config.fins.filter_order,
             stride=1,
             padding='same',
-            groups=config.model.params.num_filters,
+            groups=config.fins.num_filters,
             bias=False,
         )
 
@@ -252,9 +252,9 @@ class FINS(pl.LightningModule):
 
         # Mask for direct and early part
         mask = torch.zeros((1, 1, self.rir_length))
-        mask[:, :, : self.config.model.params.early_length] = 1.0
+        mask[:, :, : self.config.fins.early_length] = 1.0
         self.register_buffer("mask", mask)
-        self.output_conv = nn.Conv1d(config.model.params.num_filters + 1, 1, kernel_size=1, stride=1)
+        self.output_conv = nn.Conv1d(config.fins.num_filters + 1, 1, kernel_size=1, stride=1)
 
         # Loss
         fft_sizes = [64, 512, 2048, 8192]
@@ -324,6 +324,7 @@ class FINS(pl.LightningModule):
         loss_type = "train"
 
         _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
+        print(enc_reverb_speech_wav.shape, stochastic_noise.shape, noise_condition.shape, rir.shape)
         
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()
@@ -332,6 +333,8 @@ class FINS(pl.LightningModule):
 
         predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
         predicted_rir = predicted_rir.squeeze(1)
+
+        print(predicted_rir.shape, rir.shape)
 
         # Compute loss
         stft_loss_dict = self.stft_loss_fn(predicted_rir, rir)
@@ -391,11 +394,11 @@ class FINS(pl.LightningModule):
         plt.close()
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.config.train.params.lr, weight_decay=1e-6)
+        optimizer = optim.Adam(self.parameters(), lr=self.config.fins.lr, weight_decay=1e-6)
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
-            step_size=self.config.train.params.lr_step_size,
-            gamma=self.config.train.params.lr_decay_factor,
+            step_size=self.config.fins.lr_step_size,
+            gamma=self.config.fins.lr_decay_factor,
         )
         return [optimizer], [scheduler]
 

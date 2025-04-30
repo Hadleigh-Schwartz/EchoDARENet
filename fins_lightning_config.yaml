@@ -1,13 +1,12 @@
-sample_rate: &sr 48000 
-
-# dare stuff, some redundancy
-datasets_path: ./Datasets
-preencoded_speech: True
+sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
+datasets_path: ./Datasets 
+speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi"
+# TODO: RIR dataset choice
+preencoded_speech: True # tells dataloader not to encode on the fly, as audio being loaded is already encoded
+preencoded_speech_path: "preencoded_hifi" # relative to datasets_path
 random_seed: 230
-nfft: 16383
-nwins: 64
+nwins: 36 # should be 64 @ 48khz to match original FINS.
 min_early_reverb: 0.007 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
-prealign_rir: False
 plot_every_n_steps: 50
 norm_cepstra: True
 cep_target_region: [30, 150] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
@@ -21,37 +20,28 @@ Encoding: # echo encoding params
   kernel: "bp"
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
   cutoff_freq: 1000
+  hanning_factor: 2
 
-# fins thing
-dataset:
-  params:
-    sr: *sr
-    input_duration: 2.74
-    input_length : &input_length 131072
-    rir_duration: &rir_duration 1.0
-    direct_delay : 100
-    peak_norm_value : &peak_norm_value 0.5
-    source_norm_value : -25.0
+fins:
+  rir_duration: 1.0
+  direct_delay : 100
+  peak_norm_value : 0.5
+  source_norm_value : -25.0
+  num_filters : 10
+  filter_order : 1023
+  early_length : 2400
+  decoder_input_length : 400
+  noise_condition_length : 16
+  z_size : 128
+  min_snr : 15
+  max_snr : 50
+  normalize : "rms"
+  rms_level : 0.01 
+  gradient_clip_value : 5
+  lr: 0.000055
+  lr_step_size : 80
+  lr_decay_factor : 0.8
 
-# fins thing
-model:
-  name: "model.FilteredNoiseShaper"
-  params: 
-    num_filters : &num_filters 10
-    filter_order : 1023
-    sr: *sr
-    rir_duration: *rir_duration
-    input_length : *input_length
-    early_length : &early_length 2400
-    decoder_input_length : 400
-    noise_condition_length : &noise_condition_length 16
-    z_size : 128
-    min_snr : 15
-    max_snr : 50
-    normalize : "rms"
-    rms_level : &rms_level 0.01 
-
-# dare thing, some redundancy
 DataLoader:
   batch_size: 24
   num_workers: 16
@@ -60,41 +50,6 @@ DataLoader:
   drop_last: True
   pin_memory: True
 
-# fins thing
-train:
-  params:
-    sr: *sr
-    batch_size: 24
-    num_workers: 1
-    lr: 0.000055
-    lr_step_size : 80
-    lr_decay_factor : 0.8
-    gradient_clip_value: 5
-    num_epochs : 5000
-    validation_interval: 1
-    evaluation_interval : 10
-    checkpoint_interval: 1
-    random_plot_interval : 1
-    logging_dir : "logs"
-    checkpoint_dir : "checkpoints"
-    early_length: *early_length
-    peak_norm_value: *peak_norm_value
-    input_length: *input_length
-    rms_level: *rms_level
-    rir_duration: *rir_duration
-    noise_condition_length : *noise_condition_length
-    num_filters : *num_filters
-
-# fins thing
-eval:
-  params : 
-    sr : *sr 
-    rms_level : *rms_level
-    noise_condition_length : *noise_condition_length
-    num_filters: *num_filters
-    input_length : *input_length
-
-# dare thing, some redundancy
 Trainer:
   limit_train_batches: 10000
   limit_val_batches: 100
@@ -111,7 +66,6 @@ Trainer:
 ModelCheckpoint:
   dirpath: fins_checkpoints
   every_n_train_steps: 1000
-
 
 AdvancedProfiler:
   dirpath: null

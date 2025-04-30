@@ -5,10 +5,11 @@ import sys
 import pickle
 import soundfile as sf
 import librosa
+from pathlib import Path
 
-
-from datasets.speech_data import LibriSpeechDataset
-from utils.utils import getConfig
+from datasets.librispeech_data import LibriSpeechDataset
+from datasets.hifi_speech_data import HiFiSpeechDataset
+from utils.utils import load_config
 
 # append echo encoding parent dir to path
 curr_dir = os.getcwd()
@@ -17,47 +18,59 @@ sys.path.append(echo_dir)
 from traditional_echo_hiding import encode, decode, create_filter_bank
 
 def main(args):
-    cfg = getConfig(config_path=args.config_path)
+    cfg = load_config(args.config_path)
     
-    samplerate = cfg["sample_rate"]
-    amplitude = cfg["Encoding"]["amplitude"]
-    delays = cfg["Encoding"]["delays"]
-    win_size = cfg["Encoding"]["win_size"]
-    kernel = cfg["Encoding"]["kernel"]
-    decoding = cfg["Encoding"]["decoding"]
+    samplerate = cfg.sample_rate
+    amplitude = cfg.Encoding.amplitude
+    delays = cfg.Encoding.delays
+    win_size = cfg.Encoding.win_size
+    kernel = cfg.Encoding.kernel
+    hanning_factor = cfg.Encoding.hanning_factor
+    decoding = cfg.Encoding.decoding
     assert decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
     filters = create_filter_bank(kernel, delays, amplitude)
 
-    cutoff_freq = cfg["Encoding"]["cutoff_freq"]
-    nwins = cfg["nwins"]
-    normalize = cfg["model"]["params"]["normalize"]
-    noise_condition_length = cfg["model"]["params"]["noise_condition_length"]
+    nwins = cfg.nwins
     reverb_speech_duration = nwins * win_size
 
     # make the data directory if it does not exist
-    if not os.path.exists(args.data_dir):
-        os.makedirs(args.data_dir)
+    data_dir = Path(os.path.expanduser(cfg.datasets_path), cfg.preencoded_speech_path)
+    data_dir = str(data_dir)
+
+
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
 
     # copy the config file to the data directory
-    with open(os.path.join(args.data_dir, "config.yaml"), "w") as f:
+    with open(os.path.join(data_dir, "config.yaml"), "w") as f:
         with open(args.config_path, "r") as f2:
             f2_content = f2.read()
             f.write(f2_content)
               
     for split in ["train", "val", "test"]:
-        if not os.path.exists(os.path.join(args.data_dir, split)):
-            os.makedirs(os.path.join(args.data_dir, split))
+        if not os.path.exists(os.path.join(data_dir, split)):
+            os.makedirs(os.path.join(data_dir, split))
         meta = {}
-        speech_dataset = LibriSpeechDataset(cfg, type=split)
-        if args.max_samples is None:
-            max_samples = len(speech_dataset)
+        
+        if cfg.speech_dataset == "HiFi":
+            speech_dataset = HiFiSpeechDataset(cfg, type=split)
+        elif cfg.speech_dataset == "LibriSpeech":
+            speech_dataset = LibriSpeechDataset(cfg, type=split)
         else:
-            max_samples = args.max_samples
+            raise ValueError(f"Selected speech dataset {cfg.speech_dataset} is not valid")
+        
+        if args.max_files is None:
+            max_files = len(speech_dataset)
+        else:
+            max_files = args.max_files
 
         for i, data in enumerate(speech_dataset):
-            if i >= max_samples:
+            if i >= max_files:
                 break
-            speech = data[0].flatten().numpy()
+            if cfg.speech_dataset == "LibriSpeech":
+                speech = data[0].flatten().numpy() # librispeech not flattened
+            else:
+                speech = data[0]
             og_sr = data[1]
 
             # pad if not at least self.reverb_speech_duration
@@ -72,24 +85,22 @@ def main(args):
             num_wins = int(speech.shape[0] / win_size)
             symbols = np.random.randint(0, len(delays), size = num_wins)
             speech = speech[:num_wins * win_size] # trim the speech to be a multiple of the window size. 
-            enc_speech = encode(speech, symbols, amplitude, delays, win_size, samplerate, kernel, filters = filters)
-            sf.write(os.path.join(args.data_dir, split, f"enc_{i}.wav"), enc_speech, samplerate)
-            sf.write(os.path.join(args.data_dir, split, f"og_{i}.wav"), speech, samplerate)
+            enc_speech = encode(speech, symbols, amplitude, delays, win_size, samplerate, kernel, filters = filters, hanning_factor = hanning_factor)
+            sf.write(os.path.join(data_dir, split, f"enc_{i}.wav"), enc_speech, samplerate)
+            sf.write(os.path.join(data_dir, split, f"og_{i}.wav"), speech, samplerate)
             meta[i] = {
                 "symbols": symbols
             }
    
-        with open(os.path.join(args.data_dir, f"{split}_meta.pkl"), "wb") as f:
+        with open(os.path.join(data_dir, f"{split}_meta.pkl"), "wb") as f:
             pickle.dump(meta, f)
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--config_path", type=str, default="cfg.yaml", 
+    parser.add_argument("--config_path", type=str, 
                         help="A full or relative path to a cfguration yaml file. (default: cfg.yaml)")
-    parser.add_argument("--data_dir", "-d", type=str, default=None, required=True, 
-                        help = "A full or relative path to the data directory to store the encoded files at.")
-    parser.add_argument("--max_samples", "-m", type=int, default=None,
-                        help = "Maximum number of speech samples to encode. If None, all speech samples in the split will be encoded.")
+    parser.add_argument("--max_files", "-m", type=int, default=None,
+                        help = "Maximum number of speech files to encode. If None, all speech files in the split will be encoded.")
     args = parser.parse_args()
     main(args)
