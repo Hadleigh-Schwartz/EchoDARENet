@@ -38,9 +38,7 @@ def main(args):
         filename = "-{epoch:02d}-{step}-{val_loss:.2f}",
     )
 
-    # Profiler
-    profiler = AdvancedProfiler(**cfg['AdvancedProfiler'])
-
+ 
     # create custom logger to allow fig logging
     tensorboard = pl_loggers.TensorBoardLogger('./')
 
@@ -51,7 +49,6 @@ def main(args):
     # PyTorch Lightning Train
     trainer = pl.Trainer(
         gradient_clip_val = fins_config.fins.gradient_clip_value,
-        profiler = profiler,
         callbacks = [ckpt_callback],
         logger = tensorboard,
         **cfg['Trainer']

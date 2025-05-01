@@ -28,7 +28,8 @@ def main(args):
 
     # iterate over the dataloader
     for batch in datamodule.train_dataloader():
-        print(batch)
+        enc_speech_cepstra, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
+        print(enc_speech_cepstra.shape)
 
 if __name__ == "__main__":
     parser = ArgumentParser()

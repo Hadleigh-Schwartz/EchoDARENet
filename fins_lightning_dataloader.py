@@ -5,6 +5,8 @@ from datasets.librispeech_data import LibriSpeechDataset
 from datasets.hifi_speech_data import HiFiSpeechDataset
 from datasets.preencoded_speech_data import EncodedSpeechDataset
 from datasets.mit_rir_data import MitIrSurveyDataset
+from datasets.sim_rir_data import SimIRDataset
+from datasets.homula_rir_data import HomulaIRDataset
 import librosa
 from scipy import signal
 import numpy as np
@@ -31,9 +33,18 @@ class DareDataset(Dataset):
 
         self.config = config        
         self.preencoded_speech = config.preencoded_speech
-        self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
-        # TODO: can also be homula_rir_data or sim_ir_data
 
+        # load the RIR dataset
+        if self.config.rir_dataset == "sim":
+            self.rir_dataset = SimIRDataset(self.config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device)
+        elif self.config.rir_dataset == "homula":
+            self.rir_dataset = HomulaIRDataset(self.config, type=self.type, device=device)
+        elif self.config.rir_dataset == "MIT":
+            self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
+        else:
+            raise ValueError(f"Selected RIR dataset {self.config.rir_dataset} is not valid")
+
+        # load the speech dataset
         if self.preencoded_speech:
             self.speech_dataset = EncodedSpeechDataset(self.config, type=self.type)
         else:    
@@ -63,6 +74,7 @@ class DareDataset(Dataset):
         self.delays = config.Encoding.delays
         self.win_size = config.Encoding.win_size
         self.kernel = config.Encoding.kernel
+        self.hanning_factor = config.Encoding.hanning_factor
         self.decoding = config.Encoding.decoding
         assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
         self.filters = create_filter_bank(self.kernel, self.delays, self.amplitude)
@@ -193,19 +205,34 @@ class DareDataset(Dataset):
             else:
                 # normal librispeech dataset
                 speech = self.speech_dataset[idx_speech][0].flatten()
-                # pad if not at least self.reverb_speech_duration
                 speech = np.pad(
                     speech,
                     pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
                 )
                 speech = librosa.resample(speech,
-                    orig_sr=16000,
+                    orig_sr=self.speech_dataset.samplerate,
                     target_sr=self.samplerate,
                     res_type='soxr_hq')
                 num_wins = len(speech) // self.win_size
                 symbols = np.random.randint(0, len(self.delays), size = num_wins)
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
-                enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters)
+                enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters, hanning_factor = self.hanning_factor)
+
+
+            # ###### SANITY CHECKING ########
+            # # decode encoded speech to get baseline error rate
+            # pred_symbols, pred_symbols_autocepstrum  = decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = self.cutoff_freq)
+            # num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
+            # num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
+            # if self.decoding == "autocepstrum":
+            #     num_errs_no_reverb = num_errs_autocepstrum
+            # elif self.decoding == "cepstrum":
+            #     num_errs_no_reverb = num_errs 
+            # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
+            # if num_errs_no_reverb / len(pred_symbols) > 0.35:
+            #     # decode with save_plot_path
+            #     decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = True, cutoff_freq = self.cutoff_freq, save_plot_path=f"hiii{idx}")
+            # ###############################
 
             # note: here, the original FINS implementation removes DC components. It seems a bit unrealistic to do this prior to convolution, so I'll forego this for now.
 

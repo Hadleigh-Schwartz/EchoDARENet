@@ -1,15 +1,13 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
 datasets_path: ./Datasets 
 speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi". Currently just used by preencode_speech.py. TODO: incorporate for non-preencodedkmJU
-# TODO: RIR dataset choice
+rir_dataset: "MIT" # options: HOM (homula IR dataset), MIT, sim
 preencoded_speech: False # tells dataloader not to encode on the fly, as audio being loaded is already encoded
 preencoded_speech_path: "preencoded_hifi" # relative to datasets_path
 random_seed: 230
-nwins: 36 # original FINS uses 64 (assuming 48kHz data)
+nwins: 36 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
 min_early_reverb: 0 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 plot_every_n_steps: 50
-norm_cepstra: True
-cep_target_region: [50, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 data_in_ram: False
 
 Encoding: # echo encoding params
@@ -42,6 +40,17 @@ fins:
   lr_step_size : 80
   lr_decay_factor : 0.8
 
+dare:
+  learning_rate: 0.0001 
+  use_transformer: True
+  alphas: [1, 1, 0, 0] # cepstrum MSE loss weight, symbol error rate weight, error reduction weight, intra-batch RIR diff loss
+  softargmax_beta : 10000000
+  residual: True
+  norm_cepstra: True
+  cep_target_region: [50, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
+
+
+
 DataLoader:
   batch_size: 24
   num_workers: 16
@@ -71,3 +80,10 @@ AdvancedProfiler:
   dirpath: null
   filename: advanced_profiler.txt
   line_count_restriction: 1.0
+
+LearningRateMonitor:
+  logging_interval: epoch
+
+DDPStrategy:
+  process_group_backend: gloo
+  find_unused_parameters: False

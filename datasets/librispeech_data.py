@@ -12,11 +12,13 @@ def LibriSpeechDataset(config, type="train"):
         url = "test-clean"
     else:
         url=""
-    return LIBRISPEECH(
+    dataset = LIBRISPEECH(
         Path(os.path.expanduser(config['datasets_path'])),
         url=url,
         download=True
-        )
+    )
+    dataset.samplerate = 16000
+    return dataset
 
 def LibriSpeechDataloader(config, type="train"):
     return DataLoader(LibriSpeechDataset(config, type=type))

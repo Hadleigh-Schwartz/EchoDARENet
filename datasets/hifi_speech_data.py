@@ -21,6 +21,11 @@ class HiFiSpeechDataset(Dataset):
         np.random.seed(random_seed)
         np.random.shuffle(all_audio_files)
 
+        # determine samplerate by reading the first file
+        first_file = all_audio_files[0]
+        _, sr = sf.read(first_file)
+        self.samplerate = sr
+
         # split the audio files into train, val, and test sets
         train_files = all_audio_files[:int(len(all_audio_files) * split_ratio[0])]
         val_files = all_audio_files[int(len(all_audio_files) * split_ratio[0]):int(len(all_audio_files) * (split_ratio[0] + split_ratio[1]))]

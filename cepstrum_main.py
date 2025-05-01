@@ -1,41 +1,38 @@
 from argparse import ArgumentParser
-from models.cepstrum_lightning_model import getModel
-from datasets.cepstrum_reverb_speech_data import DareDataModule
+from models.cepstrum_lightning_model import EchoSpeechDAREUnet
+from fins_lightning_dataloader import DareDataModule
 import torch as t
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.strategies.ddp import DDPStrategy
-from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning import loggers as pl_loggers
-from utils.utils import getConfig
-from utils.progress_bar import getProgressBar
+from utils.utils import load_config
 import random
 import numpy as np
 import os
 os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
-
-
 def main(args):
     # ===========================================================
     # Configuration
-    cfg = getConfig(config_path=args.config_path)
+    cfg = load_config(args.config_path)
 
     random.seed(cfg.random_seed)
     np.random.seed(cfg.random_seed)
     t.manual_seed(cfg.random_seed)
 
-    # PyTorch Lightning Models
-    model = getModel(**cfg['Model'], 
-                        delays = cfg["Encoding"]["delays"],
-                        win_size = cfg["Encoding"]["win_size"], 
-                        cutoff_freq = cfg["Encoding"]["cutoff_freq"],
-                        sample_rate = cfg["sample_rate"], 
-                        same_batch_rir=cfg["same_batch_rir"], 
-                        plot_every_n_steps=cfg["plot_every_n_steps"],
-                        norm_cepstra=cfg["norm_cepstra"], 
-                        cepstrum_target_region = cfg["cep_target_region"])
+    model = EchoSpeechDAREUnet(learning_rate = cfg.dare.learning_rate,
+                    nwins = cfg.nwins,
+                    use_transformer = cfg.dare.use_transformer,
+                    alphas = cfg.dare.alphas,
+                    softargmax_beta = cfg.dare.softargmax_beta,
+                    residual=cfg.dare.residual,
+                    delays = cfg.Encoding.delays,
+                    win_size = cfg.Encoding.win_size,
+                    cutoff_freq = cfg.Encoding.cutoff_freq,
+                    sample_rate = cfg.sample_rate,
+                    plot_every_n_steps=cfg.plot_every_n_steps,
+                    norm_cepstra = cfg.dare.norm_cepstra,
+                    cepstrum_target_region = cfg.dare.cep_target_region)
 
     # Data Module
     datamodule = DareDataModule(config=cfg)
@@ -46,24 +43,13 @@ def main(args):
         filename = "-{epoch:02d}-{step}-{val_loss:.2f}",
     )
     
-    # Learning Rate Monitor
-    lr_monitor = LearningRateMonitor(**cfg['LearningRateMonitor'])
-
-    # Strategy
-    strategy = DDPStrategy(**cfg['DDPStrategy']) # changed from DataParallelStrategy due to deprecation
-
-    # Profiler
-    profiler = AdvancedProfiler(**cfg['AdvancedProfiler'])
-
     # create custom logger to allow fig logging
     tensorboard = pl_loggers.TensorBoardLogger('./')
 
     # PyTorch Lightning Train
     trainer = pl.Trainer(
         **cfg['Trainer'],
-        # strategy=strategy,
-        profiler=profiler,
-        callbacks=[ckpt_callback,lr_monitor],
+        callbacks=[ckpt_callback],
         logger = tensorboard
     )
 

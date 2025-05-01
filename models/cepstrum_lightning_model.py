@@ -13,15 +13,7 @@ from colorama import Fore, Style
 
 from decoding import CepstralDomainDecodingLoss
 
-def getModel(model_name=None, learning_rate = 1e-3, nwins = 16, use_transformer = False, alphas = [0, 0, 0, 0, 0], softargmax_beta = 100000, residual = False,
-            delays = None, win_size = None, cutoff_freq = None, sample_rate = None, same_batch_rir = False, reverse_gradient = False, plot_every_n_steps=100,
-            norm_cepstra = True, cepstrum_target_region=None):
-    if model_name == "EchoSpeechDAREUnet": model = EchoSpeechDAREUnet(learning_rate = learning_rate, nwins=nwins, 
-                                                                    use_transformer = use_transformer, alphas = alphas, softargmax_beta = softargmax_beta, residual = residual,
-                                                                    delays = delays, win_size = win_size, cutoff_freq = cutoff_freq, sample_rate = sample_rate, same_batch_rir = same_batch_rir, 
-                                                                    reverse_gradient = reverse_gradient, plot_every_n_steps=plot_every_n_steps, norm_cepstra = norm_cepstra, cepstrum_target_region = cepstrum_target_region)    
-    else: raise Exception("Unknown model name.")
-    return model
+
 
 class ReverseLayerF(Function):
 
@@ -49,8 +41,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         win_size = None,
         cutoff_freq = None,
         sample_rate = None,
-        same_batch_rir = False,
-        reverse_gradient = False,
         plot_every_n_steps=100,
         norm_cepstra = True,
         cepstrum_target_region=None
@@ -60,12 +50,10 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
         self.has_init = False
         self.learning_rate = learning_rate
-        self.reverse_gradient = reverse_gradient
         self.plot_every_n_steps = plot_every_n_steps
         self.nwins = nwins
         self.use_transformer = use_transformer
         self.residual = residual
-        self.same_batch_rir = same_batch_rir
         self.norm_cepstra = norm_cepstra
         self.alphas = alphas
         if cepstrum_target_region is not None:
@@ -76,11 +64,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.lr_scheduler_gamma = 0.9
         self.eps = 1e-16
 
-
-        if same_batch_rir is False and self.alphas[3] != 0:
-            print(Fore.RED + "WARNING: intrabatch_rir_mse loss is not used when same_batch_rir is False." + Style.RESET_ALL)
-
-         #initialize encoding parameters and decoding loss
+        #initialize encoding parameters and decoding loss
         self.delays = delays
         self.win_size = win_size
         self.cutoff_freq = cutoff_freq
@@ -161,8 +145,6 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         #     alpha = 2. / (1. + np.exp(-10 * p)) - 1
         # else:
         #     alpha = 0.5
-        if self.reverse_gradient:
-            c4Out = ReverseLayerF.apply(c4Out, 0.5)
 
         # # rir representation branch
         # print("c4Out shape: ", c4Out.shape)

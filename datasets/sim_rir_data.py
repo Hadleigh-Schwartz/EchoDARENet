@@ -11,7 +11,10 @@ class SimIRDataset(Dataset):
         self.root_dir = Path(os.path.expanduser(self.config['datasets_path']),'simulated_irs')
         self.type = type
 
-        self.max_data_len = glob.glob(str(Path(self.root_dir,"*.wav")))
+        self.max_data_len = len(glob.glob(str(Path(self.root_dir,"*.wav"))))
+
+        # get the sample rate from any file in the directory
+        self.samplerate = sf.read(glob.glob(str(Path(self.root_dir,"*.wav")))[0])[1]
 
         self.split_train_val_test_p = np.array(np.int16(split_train_val_test_p))
         self.split_train_val_test = np.int16(np.round( np.array(self.split_train_val_test_p)/100 * self.max_data_len ))
