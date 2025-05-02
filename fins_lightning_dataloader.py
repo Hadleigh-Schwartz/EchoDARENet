@@ -84,7 +84,10 @@ class DareDataset(Dataset):
         self.normalize = config.fins.normalize
         self.noise_condition_length = config.fins.noise_condition_length
         self.reverb_speech_duration = self.nwins * self.win_size
-     
+        
+        # TODO: remove???
+        self.rir_sos = signal.butter(6, 40, 'hp', fs=self.samplerate, output='sos') # Seems that this is largely for denoising the RIRs??
+
         
     
     def __len__(self):
@@ -236,19 +239,44 @@ class DareDataset(Dataset):
 
             # note: here, the original FINS implementation removes DC components. It seems a bit unrealistic to do this prior to convolution, so I'll forego this for now.
 
-            rir, rirfn = self.rir_dataset[idx_rir]
+            ####### FINS #######
+            # rir, rirfn = self.rir_dataset[idx_rir]
+            # rir = rir.flatten()
+            # rir = rir[~np.isnan(rir)]
+            # rir = librosa.resample(rir,
+            #     orig_sr=self.rir_dataset.samplerate,
+            #     target_sr=self.samplerate,
+            #     res_type='soxr_hq')
+            # rir /= np.max(np.abs(rir)) * 0.999
+            # if len(rir) < self.rir_length:
+            #     rir = np.pad(rir, (0, self.rir_length - len(rir)))
+            # elif len(rir) > self.rir_length:
+            #     rir = rir[:self.rir_length]
+            #####################
+            
+
+            ###### dare ######
+            rir,rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
             rir = rir[~np.isnan(rir)]
             rir = librosa.resample(rir,
                 orig_sr=self.rir_dataset.samplerate,
                 target_sr=self.samplerate,
                 res_type='soxr_hq')
-            rir /= np.max(np.abs(rir)) * 0.999
+            rir = rir - np.mean(rir)
+            rir = rir / np.max(np.abs(rir))
+            maxI = np.argmax(np.abs(rir))
+            rir = rir[25:]
+            rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
+            rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
+            maxI = np.argmax(np.abs(rir))
+            rir = rir / rir[maxI] # scaling
             if len(rir) < self.rir_length:
-                rir = np.pad(rir, (0, self.rir_length - len(rir)))
+                rir = np.pad(rir, pad_width=(0, np.max((0,self.rir_length - len(rir)))))
             elif len(rir) > self.rir_length:
                 rir = rir[:self.rir_length]
-            
+            ##########
+
             # convolve
             enc_reverb_speech = signal.convolve(enc_speech, rir, method='fft', mode = "full")
             unenc_reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
@@ -270,10 +298,23 @@ class DareDataset(Dataset):
             unenc_reverb_speech_cepstra = self.get_cepstrum_windows(unenc_reverb_speech)
             unenc_reverb_speech_cepstra = np.dstack(unenc_reverb_speech_cepstra)
 
+            # # normalize the cepstra along the quefrency dimension
+            # enc_speech_cepstra = enc_speech_cepstra - np.mean(enc_speech_cepstra)
+            # max_vals = np.max(np.abs(enc_speech_cepstra))
+            # # max_vals[max_vals == 0] = 1
+            # enc_speech_cepstra = enc_speech_cepstra / max_vals
+            # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra - np.mean(enc_reverb_speech_cepstra)
+            # max_vals = np.max(np.abs(enc_reverb_speech_cepstra))
+            # # max_vals[max_vals == 0] = 1
+            # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra / max_vals
+            # unenc_reverb_speech_cepstra = unenc_reverb_speech_cepstra - np.mean(unenc_reverb_speech_cepstra)
+            # max_vals = np.max(np.abs(unenc_reverb_speech_cepstra))
+            # # max_vals[max_vals == 0] = 1 
+            # unenc_reverb_speech_cepstra = unenc_reverb_speech_cepstra / max_vals
+
             # normalize the time domain speech samples.
             # caution: this normalization is not reflected in the cepstra and this should be considered when 
             # training with any losses using time domain representations
-            # enc_speech_wav = enc_speech / np.max(np.abs(enc_speech)) - np.mean(enc_speech)
             if self.normalize == "peak":
                 # peak normalization from original FINS implementation
                 raise NotImplementedError("Peak normalization not implemented yet.")

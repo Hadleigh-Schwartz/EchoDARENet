@@ -124,12 +124,6 @@ class Waveunet(pl.LightningModule):
         # TODO: Initialize values based on config
         # TODO: make option of no decoding
 
-        if config is not None:
-            if config["echo_encode"] == False:
-                raise Exception("Currently cannot use WaveUnet if config is not using echo encoding")
-        else:
-                raise Exception("Need config to decode")
-            
         # self.norm_audio = config["norm_audio"]
         self.alpha = config["WaveUnet"]["alpha"]
         self.soft_beta = config["WaveUnet"]["soft_beta"]
@@ -278,7 +272,12 @@ class Waveunet(pl.LightningModule):
             return out_dict
    
     def training_step(self, batch, batch_idx):
-        x, y, z, symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech, clean speech, RIR # should be all time domain
+        # x, y, z, symbols, num_errs_no_reverb, num_errs_reverb = batch # reverberant speech, clean speech, RIR # should be all time domain
+        _, _, _, y, x, _, _, _, _, symbols,  _= batch
+        num_errs_no_reverb = torch.tensor(0)
+        num_errs_reverb = torch.tensor(0)
+        print(x.shape, y.shape)
+
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
         x = x[:, None, :].float()
@@ -311,7 +310,10 @@ class Waveunet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         # validation_step defines the train loop.
         # it is independent of forward (but uses it)
-        x, y, z, symbols, num_errs_no_reverb, num_errs_reverb  = batch # reverberant speech, clean speech, RIR # should be all time domain
+        # x, y, z, symbols, num_errs_no_reverb, num_errs_reverb  = batch # reverberant speech, clean speech, RIR # should be all time domain
+        _, _, _, y, x, _, _, _, _, symbols,  _= batch
+        num_errs_no_reverb = torch.tensor(0)
+        num_errs_reverb = torch.tensor(0)
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
         x = x[:, None, :].float()

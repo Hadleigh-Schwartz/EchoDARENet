@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 from models.lightning_model import getModel
-from datasets.reverb_speech_data import DareDataModule
+from fins_lightning_dataloader import DareDataModule
 import torch as t
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning import loggers as pl_loggers
-from utils.utils import getConfig
+from utils.utils import load_config
 from utils.progress_bar import getProgressBar
 import random
 import numpy as np
@@ -16,14 +16,16 @@ import os
 from WaveUnet.waveunet import Waveunet
 from pytorch_lightning.loggers import TensorBoardLogger
 
-random.seed(   getConfig()['random_seed'])
-np.random.seed(getConfig()['random_seed'])
-t.manual_seed( getConfig()['random_seed'])
+
 
 def main(args):
     # ===========================================================
     # Configuration
-    cfg = getConfig(config_path=args.config_path)
+    cfg = load_config(args.config_path)
+
+    random.seed(   cfg['random_seed'])
+    np.random.seed(cfg['random_seed'])
+    t.manual_seed(cfg['random_seed'])
 
 
     channels         = cfg['WaveUnet']['channels']
@@ -40,7 +42,7 @@ def main(args):
     num_features     = [features*i for i in range(1, levels+1)] if feature_growth == "add" else \
                         [features*2**i for i in range(0, levels)]
     target_outputs   = int(output_size * sr)
-    learning_rate    = cfg['Model']['learning_rate']
+    learning_rate    = cfg['WaveUnet']['learning_rate']
     model            = Waveunet(channels, num_features, channels, instruments, kernel_size_down=kernel_size_down, kernel_size_up=kernel_size_up, target_output_size=target_outputs, conv_type=conv_type, res=res, separate=False, learning_rate=learning_rate, 
                         config = cfg)
 
@@ -52,8 +54,7 @@ def main(args):
     ckpt_callback = ModelCheckpoint(
         **cfg['ModelCheckpoint'],
         filename = model.name + "-{epoch:02d}-{val_loss:.4f}",
-        save_top_k=-1,
-        every_n_epochs=1
+        save_top_k=-1
     )
     
     # Learning Rate Monitor

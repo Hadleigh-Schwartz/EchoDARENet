@@ -1,24 +1,24 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
 datasets_path: ./Datasets 
-speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi". Currently just used by preencode_speech.py. TODO: incorporate for non-preencodedkmJU
-rir_dataset: "MIT" # options: HOM (homula IR dataset), MIT, sim
+speech_dataset: "LibriSpeech" # options: "LibriSpeech", "HiFi". Currently just used by preencode_speech.py. TODO: incorporate for non-preencodedkmJU
+rir_dataset: "homula" # options: homula, MIT, sim
 preencoded_speech: False # tells dataloader not to encode on the fly, as audio being loaded is already encoded
 preencoded_speech_path: "preencoded_hifi" # relative to datasets_path
 random_seed: 230
-nwins: 36 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
-min_early_reverb: 0 # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
+min_early_reverb: 0.007  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 plot_every_n_steps: 50
 data_in_ram: False
 
 Encoding: # echo encoding params
   # note: the below delays have been adapted to the 48kHz sampling rate, as opposed to the previously used 16khz
-  delays: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114]
-  amplitude: 0.4
-  win_size: 3000
+  delays: [110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199]
+  amplitude: 0.8
+  win_size: 3072
   kernel: "bp"
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
   cutoff_freq: 1000
-  hanning_factor: 2
+  hanning_factor: 4
 
 fins:
   rir_duration: 1.0
@@ -47,12 +47,25 @@ dare:
   softargmax_beta : 10000000
   residual: True
   norm_cepstra: True
-  cep_target_region: [50, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
+  cep_target_region: [100, 250] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 
-
+WaveUnet:
+  channels: 1
+  kernel_size_down: 15
+  kernel_size_up: 5
+  levels: 12
+  features: 24
+  feature_growth: add
+  output_size: 2.0
+  sr: 16000
+  conv_type: bn
+  res: fixed
+  alpha: 0.5
+  soft_beta: 1000000000000
+  learning_rate:  0.000001
 
 DataLoader:
-  batch_size: 24
+  batch_size: 64
   num_workers: 16
   persistent_workers: True
   shuffle: True
@@ -60,9 +73,9 @@ DataLoader:
   pin_memory: True
 
 Trainer:
-  limit_train_batches: 10000
-  limit_val_batches: 100
-  limit_test_batches: 100
+  limit_train_batches: 100
+  limit_val_batches: 3
+  limit_test_batches: 3
   max_epochs: 100
   num_sanity_val_steps: 1
   accumulate_grad_batches: 1
@@ -70,7 +83,7 @@ Trainer:
   # val_check_interval: 0.05 # val every this fraction of an epoch
   check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [1]
+  devices: [0]
 
 ModelCheckpoint:
   dirpath: fins_checkpoints
