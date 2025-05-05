@@ -6,6 +6,9 @@ import pickle
 import soundfile as sf
 import librosa
 from pathlib import Path
+import random
+import torch as t
+import pandas as pd
 
 from datasets.librispeech_data import LibriSpeechDataset
 from datasets.hifi_speech_data import HiFiSpeechDataset
@@ -19,6 +22,10 @@ from traditional_echo_hiding import encode, create_filter_bank
 
 def main(args):
     cfg = load_config(args.config_path)
+
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    t.manual_seed(cfg.random_seed)
     
     samplerate = cfg.sample_rate
     amplitude = cfg.Encoding.amplitude
@@ -64,8 +71,9 @@ def main(args):
         else:
             max_files = args.max_files
 
+        num_files_written = 0
         for i, data in enumerate(speech_dataset):
-            if i >= max_files:
+            if num_files_written >= max_files:
                 break
             if cfg.speech_dataset == "LibriSpeech":
                 speech = data[0].flatten().numpy() # librispeech not flattened
@@ -73,24 +81,41 @@ def main(args):
                 speech = data[0]
             og_sr = data[1]
 
-            # pad if not at least self.reverb_speech_duration
-            speech = np.pad(
-                speech,
-                pad_width=(0, np.max((0, reverb_speech_duration - len(speech)))),
-            )
+            # resample to common samplerate specified in config
             speech = librosa.resample(speech,
                 orig_sr=og_sr,
                 target_sr=samplerate,
                 res_type='soxr_hq')  
+            
+            # crop speech to remove silence
+            if args.no_silence:
+                speech_pos = speech + -1*np.min(speech)
+                df = pd.Series(speech_pos)
+                df = df.rolling(100, center=True).median()
+                df = df + np.min(speech)
+                first_index = df[df > 0.001].index[0]
+                last_index = df[df > 0.001].index[-1]
+                speech = speech[first_index:last_index]
+                if len(speech) < reverb_speech_duration:
+                    continue
+            else:  
+                # pad if not at least self.reverb_speech_duration
+                speech = np.pad(
+                    speech,
+                    pad_width=(0, np.max((0, reverb_speech_duration - len(speech)))),
+                )
+
             num_wins = int(speech.shape[0] / win_size)
             symbols = np.random.randint(0, len(delays), size = num_wins)
             speech = speech[:num_wins * win_size] # trim the speech to be a multiple of the window size. 
             enc_speech = encode(speech, symbols, amplitude, delays, win_size, samplerate, kernel, filters = filters, hanning_factor = hanning_factor)
-            sf.write(os.path.join(data_dir, split, f"enc_{i}.wav"), enc_speech, samplerate)
-            sf.write(os.path.join(data_dir, split, f"og_{i}.wav"), speech, samplerate)
-            meta[i] = {
+            sf.write(os.path.join(data_dir, split, f"enc_{num_files_written}.wav"), enc_speech, samplerate)
+            sf.write(os.path.join(data_dir, split, f"og_{num_files_written}.wav"), speech, samplerate)
+            meta[num_files_written] = {
                 "symbols": symbols
             }
+
+            num_files_written += 1
    
         with open(os.path.join(data_dir, f"{split}_meta.pkl"), "wb") as f:
             pickle.dump(meta, f)
@@ -102,5 +127,8 @@ if __name__ == "__main__":
                         help="A full or relative path to a cfguration yaml file. (default: cfg.yaml)")
     parser.add_argument("--max_files", "-m", type=int, default=None,
                         help = "Maximum number of speech files to encode. If None, all speech files in the split will be encoded.")
+    parser.add_argument("--no_silence", action="store_true",
+                        help = "If set, the speech will be cropped to remove silence and only files with non-silent content of at least reverb_duration will be used." \
+                        "If not set, the speech may be padded to the required length.")
     args = parser.parse_args()
     main(args)

@@ -206,21 +206,34 @@ class DareDataset(Dataset):
                 speech, enc_speech, _, symbols = self.speech_dataset[idx_speech]
                 num_wins = len(enc_speech) // self.win_size
             else:
-                # normal librispeech dataset
+                # save image of the original speech
                 speech = self.speech_dataset[idx_speech][0].flatten()
-                speech = np.pad(
-                    speech,
-                    pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
-                )
+                speech = np.array(speech)
+                # plt.figure(figsize=(10, 4))
+                # plt.plot(speech)
+                # plt.savefig(f"speech_{idx_speech}.png")
+                # plt.close()      
+                # print(speech.shape, "heyyyy")
+                # print(self.speech_dataset.samplerate, self.samplerate, 'howdy')
                 speech = librosa.resample(speech,
                     orig_sr=self.speech_dataset.samplerate,
                     target_sr=self.samplerate,
                     res_type='soxr_hq')
+                speech = np.pad(
+                    speech,
+                    pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
+                )
+                # save image of the resampled speech
+                # plt.figure(figsize=(10, 4))
+                # plt.plot(speech)
+                # plt.savefig(f"resampled_speech_{idx_speech}.png")
+                # plt.close()
+                # print("final", speech.shape)
                 num_wins = len(speech) // self.win_size
                 symbols = np.random.randint(0, len(self.delays), size = num_wins)
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
                 enc_speech = encode(speech, symbols, self.amplitude, self.delays, self.win_size, self.samplerate, self.kernel, filters = self.filters, hanning_factor = self.hanning_factor)
-
+                
 
             # ###### SANITY CHECKING ########
             # # decode encoded speech to get baseline error rate
@@ -278,6 +291,7 @@ class DareDataset(Dataset):
             ##########
 
             # convolve
+      
             enc_reverb_speech = signal.convolve(enc_speech, rir, method='fft', mode = "full")
             unenc_reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
 
@@ -289,6 +303,7 @@ class DareDataset(Dataset):
             unenc_reverb_speech = unenc_reverb_speech[start:start + self.reverb_speech_duration]
             start_win = start // self.win_size
             symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
+            # print(len(enc_speech), len(enc_reverb_speech), len(unenc_reverb_speech), len(symbols))
 
             # get cepstrum windows of speech (encoded, unencoded, reverberated and whatnot)
             enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
@@ -303,10 +318,12 @@ class DareDataset(Dataset):
             # max_vals = np.max(np.abs(enc_speech_cepstra))
             # # max_vals[max_vals == 0] = 1
             # enc_speech_cepstra = enc_speech_cepstra / max_vals
+
             # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra - np.mean(enc_reverb_speech_cepstra)
             # max_vals = np.max(np.abs(enc_reverb_speech_cepstra))
             # # max_vals[max_vals == 0] = 1
             # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra / max_vals
+
             # unenc_reverb_speech_cepstra = unenc_reverb_speech_cepstra - np.mean(unenc_reverb_speech_cepstra)
             # max_vals = np.max(np.abs(unenc_reverb_speech_cepstra))
             # # max_vals[max_vals == 0] = 1 
@@ -327,6 +344,48 @@ class DareDataset(Dataset):
                 enc_speech_wav = enc_speech
                 enc_reverb_speech_wav = enc_reverb_speech
                 unenc_reverb_speech_wav = unenc_reverb_speech
+
+            # ### TEMP ###
+            # enc_speech_wav  = np.pad(
+            #      enc_speech_wav ,
+            #     pad_width=(0, np.max((0,135141 - len(enc_speech_wav )))),
+            #     )
+            # enc_speech_wav  =  enc_speech_wav[:135141] # expected input size given 15 up, 5 down filters and 2sec output
+
+            # enc_reverb_speech_wav  = np.pad(
+            #      enc_reverb_speech_wav ,
+            #     pad_width=(0, np.max((0,135141 - len(enc_reverb_speech_wav )))),
+            #     )
+            # enc_reverb_speech_wav  =  enc_reverb_speech_wav[:135141] # expected input size given 15 up, 5 down filters and 2sec output
+
+            # unenc_reverb_speech_wav  = np.pad(
+            #         unenc_reverb_speech_wav ,
+            #     pad_width=(0, np.max((0,135141 - len(unenc_reverb_speech_wav )))),
+            #     )
+            # unenc_reverb_speech_wav  =  unenc_reverb_speech_wav[:135141] # expected input size given 15 up, 5 down filters and 2sec output
+            # #### ONLY FOR PRELIM TESTS WITH WAVENET ####    
+
+            ###### UNCOMMENT IF ADDING DEC ERRORS ########
+            # decode encoded speech to get baseline error rate
+            pred_symbols, pred_symbols_autocepstrum  = decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+            num_errs = np.sum(np.array(pred_symbols) != np.array(symbols))
+            num_errs_autocepstrum  = np.sum(np.array(pred_symbols_autocepstrum ) != np.array(symbols))
+            if self.decoding == "autocepstrum":
+                num_errs_no_reverb = num_errs_autocepstrum
+            elif self.decoding == "cepstrum":
+                num_errs_no_reverb = num_errs 
+            # print(f"Num err symbols og: {num_errs}/{len(pred_symbols)}. Num err symbols autocep {num_errs_autocepstrum }/{len(pred_symbols_autocepstrum )}")
+
+            reverb_speech_dec = enc_reverb_speech[:num_wins * self.win_size]
+            rev_pred_symbols, rev_pred_symbols_autocepstrum  = decode(reverb_speech_dec, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = False, cutoff_freq = 1000)
+            rev_num_errs = np.sum(np.array(rev_pred_symbols) != np.array(symbols))
+            rev_num_errs_autocepstrum  = np.sum(np.array(rev_pred_symbols_autocepstrum ) != np.array(symbols))
+            # print(f"Reverbed num err symbols og: {rev_num_errs}/{len(rev_pred_symbols)}. Reverbed num err symbols autocep {rev_num_errs_autocepstrum }/{len(rev_pred_symbols_autocepstrum )}")
+            if self.decoding == "autocepstrum":
+                num_errs_reverb = rev_num_errs_autocepstrum
+            elif self.decoding == "cepstrum":
+                num_errs_reverb = rev_num_errs
+            ###################################
 
             # unsqueeze wavs to add channel dimension (expected by FINS)
             enc_speech_wav = np.expand_dims(enc_speech_wav, axis=0)
@@ -350,7 +409,7 @@ class DareDataset(Dataset):
         
         return enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb, 
 
 
 def batch_sampler(config, type="train"):

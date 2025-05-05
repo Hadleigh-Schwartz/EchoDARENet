@@ -161,8 +161,6 @@ class TimeDomainDecodingLoss(DecodingLoss):
         """
         Compute various loss functions for the decoding task.
 
-        TODO: Ceptral loss
-
         Parameters:
             audio_batch : torch.Tensor (batch_size, 1, num_samples)
                 Batch of audio samples in time domain

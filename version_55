@@ -43,11 +43,11 @@ fins:
 dare:
   learning_rate: 0.0001 
   use_transformer: True
-  alphas: [2000, 0.5, 10, 0] # cepstrum MSE loss weight, symbol error rate weight, full cepstrum MES loss weight, average error reduction loss weight
+  alphas: [10, 0.5, 0, 0] # cepstrum MSE loss weight, symbol error rate weight, full cepstrum MES loss weight, average error reduction loss weight
   softargmax_beta : 10000000
-  residual: True
+  residual: False
   norm_cepstra: False
-  cep_target_region: [40, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
+  cep_target_region: [30, 150] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 
 
 DataLoader:
@@ -69,7 +69,7 @@ Trainer:
   # val_check_interval: 0.05 # val every this fraction of an epoch
   check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [3]
+  devices: [2]
 
 ModelCheckpoint:
   dirpath: fins_checkpoints

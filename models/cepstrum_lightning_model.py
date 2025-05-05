@@ -78,7 +78,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.init()
 
     def init(self):
-        k = 5
+        k = 3
         s = 2
         p_drop = 0.5
         leaky_slope = 0.2
@@ -96,7 +96,22 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         self.deconv2 = nn.Sequential(nn.ConvTranspose2d(1024, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv3 = nn.Sequential(nn.ConvTranspose2d(512,  128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128),  nn.Dropout2d(p=p_drop), nn.ReLU())
         self.deconv4 = nn.Sequential(nn.ConvTranspose2d(256,   64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64), nn.ReLU()) # important to have Tanh not previous version's ReLU otherwise can't be negative
-        self.deconv5 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.Tanh()) 
+        self.deconv5 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1),  nn.BatchNorm2d(2), nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+
+        # leaky_slope = 0.01
+        
+        # self.conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
+        # self.conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
+        # self.conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
+        # self.conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
+        
+        # if self.use_transformer:
+        #     self.transformer = nn.Transformer(d_model=256, nhead=4, num_encoder_layers=5, num_decoder_layers=5, batch_first=True)
+
+        # self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
+        # self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
+        # self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2), nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
 
     def predict(self, x):
         if self.residual:
@@ -112,13 +127,16 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             c5Out = self.transformer(\
                 c5Out.squeeze().permute((0,2,1)), \
                 c5Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
+            # c4Out = self.transformer(\
+            #     c4Out.squeeze().permute((0,2,1)), \
+            #     c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
         
         d1Out = self.deconv1(c5Out) 
         d2Out = self.deconv2(t.cat((d1Out, c4Out), dim=1)) 
         d3Out = self.deconv3(t.cat((d2Out, c3Out), dim=1)) 
         d4Out = self.deconv4(t.cat((d3Out, c2Out), dim=1)) 
         d5Out = self.deconv5(t.cat((d4Out, c1Out), dim=1)) 
-
+   
         if self.residual:
             cep_out = d5Out + residual
         else:
@@ -130,11 +148,11 @@ class EchoSpeechDAREUnet(pl.LightningModule):
         loss_type = "train"
         enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir = batch
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
         enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float()
         enc_speech_cepstra = enc_speech_cepstra.float()
-        num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
-        num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
+        # num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
+        # num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
 
         # x, ys, zs, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech cepstra, clean speech cepstra, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
         # ys = ys.float()
@@ -150,12 +168,13 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             plot = False
 
 
-        cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
+        cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss 
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + full_cepstra_loss * self.alphas[2]  + self.alphas[3] * avg_err_reduction_loss 
         
         self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
@@ -172,20 +191,21 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
         enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir = batch
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
         enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float()
         enc_speech_cepstra = enc_speech_cepstra.float()
-        num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
-        num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
+        # num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
+        # num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
 
         enc_speech_cepstra_hat = self.predict(enc_reverb_speech_cepstra) 
 
-        cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
+        cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * avg_err_reduction_loss 
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + full_cepstra_loss * self.alphas[2]  + self.alphas[3] * avg_err_reduction_loss 
         
         self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
+        self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
@@ -235,7 +255,23 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             p_hat[torch.isnan(p_hat)] = 0
             p[torch.isnan(p)] = 0
         mse_abs = nn.functional.mse_loss(p_hat, p)
-        return mse_abs
+
+        p_hat_full = y_predict[:,0,:,:]
+        p_full = y[:,0,:,:]
+        if self.norm_cepstra:
+            # minmax scasle target region
+            p_mins = p_full.min(dim = 1, keepdim=True)[0]        
+            p_maxs = p_full.max(dim = 1, keepdim=True)[0]
+            p_full = (p_full - p_mins) / (p_maxs - p_mins)
+            p_hat_mins = p_hat_full.min(dim = 1, keepdim=True)[0]
+            p_hat_maxs = p_hat_full.max(dim = 1, keepdim=True)[0]
+            p_hat_full = (p_hat_full - p_hat_mins) / (p_hat_maxs - p_hat_mins)
+            p_hat_full[torch.isinf(p_hat_full)] = 0
+            p_full[torch.isinf(p_full)] = 0
+            p_hat_full[torch.isnan(p_hat_full)] = 0
+            p_full[torch.isnan(p_full)] = 0
+        mse_abs_full = nn.functional.mse_loss(p_hat_full, p_full)
+        return mse_abs, mse_abs_full
     
 
     def make_cepstra_plot(self, input_cepstra, clean_cepstra, pred_cepstra, symbols, loss_type = "train"):
@@ -316,14 +352,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
             layers.append(self.conv2[0])
             layers.append(self.conv3[0])
             layers.append(self.conv4[0])
-            layers.append(self.conv5[0])
+            # layers.append(self.conv5[0])
             if self.use_transformer:
                 layers.append(self.transformer)
             layers.append(self.deconv1[0])
             layers.append(self.deconv2[0])
             layers.append(self.deconv3[0])
             layers.append(self.deconv4[0])
-            layers.append(self.deconv5[0])
+            # layers.append(self.deconv5[0])
             
             for layer_number in range(len(layers)):
                 layer = layers[layer_number]

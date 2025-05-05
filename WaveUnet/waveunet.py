@@ -276,13 +276,15 @@ class Waveunet(pl.LightningModule):
         _, _, _, y, x, _, _, _, _, symbols,  _= batch
         num_errs_no_reverb = torch.tensor(0)
         num_errs_reverb = torch.tensor(0)
-        print(x.shape, y.shape)
+        print(x.shape, y.shape, symbols.shape)
 
+        x = x.float()
+        y = y.float()
 
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
-        x = x[:, None, :].float()
-        y = y[:, None, :].float()
-        z = z[:, None, :].float()
+        # x = x[:, None, :].float()
+        # y = y[:, None, :].float()
+        # z = z[:, None, :].float()
 
         out  = self.forward(x)
         # if self.norm_audio:
@@ -296,8 +298,8 @@ class Waveunet(pl.LightningModule):
  
         loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
            
-        if batch_idx % 100 == 0:
-            self.plot(x, y, z, out, "Train")
+        # if batch_idx % 100 == 0:
+        #     self.plot(x, y, z, out, "Train")
             
         self.log("train_loss", loss )
         self.log("train_avg_err_reduction", avg_err_reduction)
@@ -312,21 +314,26 @@ class Waveunet(pl.LightningModule):
         # it is independent of forward (but uses it)
         # x, y, z, symbols, num_errs_no_reverb, num_errs_reverb  = batch # reverberant speech, clean speech, RIR # should be all time domain
         _, _, _, y, x, _, _, _, _, symbols,  _= batch
+        print(x.shape, y.shape, symbols.shape)
         num_errs_no_reverb = torch.tensor(0)
         num_errs_reverb = torch.tensor(0)
 
+        x = x.float()
+        y = y.float()
+
         # convert from (batch_size, num_samples) to (batch_size, 1, num_samples)
-        x = x[:, None, :].float()
-        y = y[:, None, :].float()
-        z = z[:, None, :].float()
+        # x = x[:, None, :].float()
+        # y = y[:, None, :].float()
+        # z = z[:, None, :].float()
 
         out  = self.forward(x)
         speechMSEloss = nn.functional.mse_loss(out["speech"], centre_crop(y, out["speech"]))
+        print(out["speech"].shape)
         symbol_err_rate, avg_err_reduction, gt_symbol_err_rate_no_reverb, gt_symbol_err_rate_reverb = self.decoding_loss(out["speech"], symbols, num_errs_no_reverb, num_errs_reverb)
         
         loss = symbol_err_rate * self.alpha +  speechMSEloss * (1 - self.alpha)
 
-        self.plot(x, y, z, out, "Val")
+        # self.plot(x, y, z, out, "Val")
            
         self.log("val_loss", loss )
         self.log("val_avg_err_reduction", avg_err_reduction)
