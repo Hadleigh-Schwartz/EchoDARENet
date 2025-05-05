@@ -7,7 +7,7 @@ preencoded_speech_path: "test5" # relative to datasets_path
 random_seed: 42
 nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
 min_early_reverb: 0.007  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
-plot_every_n_steps: 200
+plot_every_n_steps: 250
 data_in_ram: False
 
 Encoding: # echo encoding params
@@ -69,7 +69,7 @@ Trainer:
   # val_check_interval: 0.05 # val every this fraction of an epoch
   check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [3]
+  devices: [2]
 
 ModelCheckpoint:
   dirpath: fins_checkpoints
