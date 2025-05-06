@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-from models.cep2_model import Test
+from models.cep3_model import Test
 from fins_lightning_dataloader import DareDataModule
 import torch as t
 import pytorch_lightning as pl
