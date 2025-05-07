@@ -73,6 +73,11 @@ def main(args):
 
         num_files_written = 0
         for i, data in enumerate(speech_dataset):
+            # skip if the file already exists
+            if os.path.exists(os.path.join(data_dir, split, f"enc_{num_files_written}.wav")):
+                num_files_written += 1
+                continue
+
             if num_files_written >= max_files:
                 break
             if cfg.speech_dataset == "LibriSpeech":

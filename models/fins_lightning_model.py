@@ -288,7 +288,7 @@ class FINS(pl.LightningModule):
 
 
 
-    def predict(self, x, stochastic_noise, noise_condition):
+    def forward(self, x, stochastic_noise, noise_condition):
         """
         args:
             x : Reverberant speech. shape=(batch_size, 1, input_samples)
@@ -335,14 +335,15 @@ class FINS(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss_type = "train"
 
-        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
- 
+        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ , _, _ = batch
+
+
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()
         stochastic_noise = stochastic_noise.float()
         noise_condition = noise_condition.float()
 
-        predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
+        predicted_rir = self(enc_reverb_speech_wav, stochastic_noise, noise_condition)
         predicted_rir = predicted_rir.squeeze(1)
 
     
@@ -362,14 +363,14 @@ class FINS(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
 
-        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ = batch
+        _, _, _, _, enc_reverb_speech_wav, _, rir, stochastic_noise, noise_condition, _, _ , _, _= batch
 
         # convert speech wavs and noise to floats
         enc_reverb_speech_wav = enc_reverb_speech_wav.float()
         stochastic_noise = stochastic_noise.float()
         noise_condition = noise_condition.float()
 
-        predicted_rir = self.predict(enc_reverb_speech_wav, stochastic_noise, noise_condition)
+        predicted_rir = self(enc_reverb_speech_wav, stochastic_noise, noise_condition)
         predicted_rir = predicted_rir.squeeze(1)
 
         # Compute loss

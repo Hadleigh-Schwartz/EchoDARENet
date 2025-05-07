@@ -1,4 +1,4 @@
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, ConcatDataset
 from pytorch_lightning import LightningDataModule
 
 from datasets.librispeech_data import LibriSpeechDataset
@@ -24,36 +24,77 @@ echo_dir = curr_dir.split("EchoDARENet")[0]
 sys.path.append(echo_dir)
 from traditional_echo_hiding import encode, decode, create_filter_bank
 
+class ConcatRIRDataset(ConcatDataset):
+    def __init__(self, datasets):
+        super().__init__(datasets)
+        self.samplerate = datasets[0].samplerate
+  
 class DareDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
-
+      
         self.type = type
         self.split_train_val_test_p = split_train_val_test_p
         self.device = device
 
         self.config = config        
-        self.preencoded_speech = config.preencoded_speech
 
         # load the RIR dataset
-        if self.config.rir_dataset == "sim":
-            self.rir_dataset = SimIRDataset(self.config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device)
-        elif self.config.rir_dataset == "homula":
-            self.rir_dataset = HomulaIRDataset(self.config, type=self.type, device=device)
-        elif self.config.rir_dataset == "MIT":
-            self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
-        else:
-            raise ValueError(f"Selected RIR dataset {self.config.rir_dataset} is not valid")
+        rir_datasets = []
+        for dataset in config.rir_datasets:
+            if dataset == "sim":
+                rir_datasets.append(SimIRDataset(config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device))
+            elif dataset == "homula":
+                rir_datasets.append(HomulaIRDataset(config, type=self.type, device=device))
+            elif dataset == "MIT":
+                rir_datasets.append(MitIrSurveyDataset(config, type=self.type, device=device))
+            else:
+                raise ValueError(f"Selected RIR dataset {dataset} is not valid")
+        self.rir_dataset = ConcatRIRDataset(rir_datasets)
+       
+        # if self.config.rir_dataset == "sim":
+        #     self.rir_dataset = SimIRDataset(self.config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device)
+        # elif self.config.rir_dataset == "homula":
+        #     self.rir_dataset = HomulaIRDataset(self.config, type=self.type, device=device)
+        # elif self.config.rir_dataset == "MIT":
+        #     self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
+        # else:
+        #     raise ValueError(f"Selected RIR dataset {self.config.rir_dataset} is not valid")
 
         # load the speech dataset
-        if self.preencoded_speech:
-            self.speech_dataset = EncodedSpeechDataset(self.config, type=self.type)
-        else:    
-            if self.config.speech_dataset == "HiFi":
-                self.speech_dataset = HiFiSpeechDataset(self.config, type=self.type)
-            elif self.config.speech_dataset == "LibriSpeech":
-                self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+        speech_datasets = []
+        self.preencoded_speech = None
+        for dataset in config.speech_datasets:
+            if dataset == "HiFi":
+                speech_datasets.append(HiFiSpeechDataset(config, type=self.type))
+                if self.preencoded_speech is None:
+                    self.preencoded_speech = False
+                elif self.preencoded_speech:
+                    raise ValueError("Preencoded speech dataset and HiFi dataset cannot be used together.")
+            elif dataset == "LibriSpeech":
+                speech_datasets.append(LibriSpeechDataset(config, type=self.type))
+                if self.preencoded_speech is None:
+                    self.preencoded_speech = False
+                elif self.preencoded_speech:
+                    raise ValueError("Preencoded speech dataset and LibriSpeech dataset cannot be used together.")
+            elif os.path.exists(f"{os.path.expanduser(self.config.datasets_path)}/{dataset}"):
+                speech_datasets.append(EncodedSpeechDataset(config, dataset, type=self.type))
+                if self.preencoded_speech is None:
+                    self.preencoded_speech = True
+                elif not self.preencoded_speech:
+                    raise ValueError("Preencoded speech dataset and LibriSpeech/HiFi dataset cannot be used together.")
             else:
-                raise ValueError(f"Selected speech dataset {self.config.speech_dataset} is not valid")
+                raise ValueError(f"Selected speech dataset {dataset} is not valid")
+        self.speech_dataset = ConcatDataset(speech_datasets)
+
+        # if self.preencoded_speech:
+        #     self.speech_dataset = EncodedSpeechDataset(self.config, type=self.type)
+        # else:    
+        #     if self.config.speech_dataset == "HiFi":
+        #         self.speech_dataset = HiFiSpeechDataset(self.config, type=self.type)
+        #     elif self.config.speech_dataset == "LibriSpeech":
+        #         self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
+        #     else:
+        #         raise ValueError(f"Selected speech dataset {self.config.speech_dataset} is not valid")
         
         if type == "train":
             self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_train_batches
@@ -250,45 +291,45 @@ class DareDataset(Dataset):
             #     decode(enc_speech, self.delays, self.win_size, self.samplerate, pn = None, gt = symbols, plot = True, cutoff_freq = self.cutoff_freq, save_plot_path=f"hiii{idx}")
             # ###############################
 
-            # note: here, the original FINS implementation removes DC components. It seems a bit unrealistic to do this prior to convolution, so I'll forego this for now.
+            # note: here, the original FINS implementation removes DC component of audio. It seems a bit unrealistic to do this prior to convolution, so I'll forego this for now.
 
-            ####### FINS #######
-            # rir, rirfn = self.rir_dataset[idx_rir]
-            # rir = rir.flatten()
-            # rir = rir[~np.isnan(rir)]
-            # rir = librosa.resample(rir,
-            #     orig_sr=self.rir_dataset.samplerate,
-            #     target_sr=self.samplerate,
-            #     res_type='soxr_hq')
-            # rir /= np.max(np.abs(rir)) * 0.999
-            # if len(rir) < self.rir_length:
-            #     rir = np.pad(rir, (0, self.rir_length - len(rir)))
-            # elif len(rir) > self.rir_length:
-            #     rir = rir[:self.rir_length]
-            #####################
-            
-
-            ###### dare ######
-            rir,rirfn = self.rir_dataset[idx_rir]
+            ###### FINS #######
+            rir, rirfn = self.rir_dataset[idx_rir]
             rir = rir.flatten()
             rir = rir[~np.isnan(rir)]
             rir = librosa.resample(rir,
                 orig_sr=self.rir_dataset.samplerate,
                 target_sr=self.samplerate,
                 res_type='soxr_hq')
-            rir = rir - np.mean(rir)
-            rir = rir / np.max(np.abs(rir))
-            maxI = np.argmax(np.abs(rir))
-            rir = rir[25:]
-            rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
-            rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
-            maxI = np.argmax(np.abs(rir))
-            rir = rir / rir[maxI] # scaling
+            rir /= np.max(np.abs(rir)) * 0.999
             if len(rir) < self.rir_length:
-                rir = np.pad(rir, pad_width=(0, np.max((0,self.rir_length - len(rir)))))
+                rir = np.pad(rir, (0, self.rir_length - len(rir)))
             elif len(rir) > self.rir_length:
                 rir = rir[:self.rir_length]
-            ##########
+            ####################
+            
+
+            # ###### dare ######
+            # rir,rirfn = self.rir_dataset[idx_rir]
+            # rir = rir.flatten()
+            # rir = rir[~np.isnan(rir)]
+            # rir = librosa.resample(rir,
+            #     orig_sr=self.rir_dataset.samplerate,
+            #     target_sr=self.samplerate,
+            #     res_type='soxr_hq')
+            # rir = rir - np.mean(rir)
+            # rir = rir / np.max(np.abs(rir))
+            # maxI = np.argmax(np.abs(rir))
+            # rir = rir[25:]
+            # rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
+            # rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
+            # maxI = np.argmax(np.abs(rir))
+            # rir = rir / rir[maxI] # scaling
+            # if len(rir) < self.rir_length:
+            #     rir = np.pad(rir, pad_width=(0, np.max((0,self.rir_length - len(rir)))))
+            # elif len(rir) > self.rir_length:
+            #     rir = rir[:self.rir_length]
+            # ##########
 
             # convolve
       
@@ -399,20 +440,23 @@ class DareDataset(Dataset):
             if self.data_in_ram:
                 self.data.append((enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
                                     enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
-                                    rir, stochastic_noise, noise_condition, symbols, idx_rir))
+                                    rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
             enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
             enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
-            rir, stochastic_noise, noise_condition, symbols, idx_rir = self.data[self.idx_to_data[idx]]
+            rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
         
         return enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb, 
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb
 
 
 def batch_sampler(config, type="train"):
+    """
+    For more control over batch sampling
+    """
     dummy_dataset = DareDataset(config, type=type)
     dataset_len = len(dummy_dataset)
     batch_size = config.DataLoader.batch_size
@@ -426,14 +470,17 @@ def batch_sampler(config, type="train"):
         # emulate a vanilla random sampler, i.e., shuffle the indices, then divide into batches
         np.random.shuffle(indices)
         indices = np.array_split(indices, num_batches)
-    return indices    
+    return indices   
+
 
 def DareDataloader(config,type="train"):
     cfg = copy.deepcopy(config)
-    # if type != "train":
-    #     cfg['DataLoader']['shuffle'] = False
-    return DataLoader(DareDataset(cfg,type), num_workers = cfg["DataLoader"]["num_workers"], persistent_workers = cfg["DataLoader"]["persistent_workers"], pin_memory = cfg["DataLoader"]["pin_memory"], 
-                       batch_sampler=batch_sampler(cfg, type))
+    if type != "train":
+        cfg['DataLoader']['shuffle'] = False
+
+    return DataLoader(DareDataset(cfg,type),**cfg['DataLoader'])
+    # return DataLoader(DareDataset(cfg,type), num_workers = cfg["DataLoader"]["num_workers"], persistent_workers = cfg["DataLoader"]["persistent_workers"], pin_memory = cfg["DataLoader"]["pin_memory"], 
+    #                    batch_sampler=batch_sampler(cfg, type))
 
 class DareDataModule(LightningDataModule):
     def __init__(self,config):

@@ -7,9 +7,9 @@ import os
 import pickle
 
 class EncodedSpeechDataset(Dataset):
-    def __init__(self, config, type="train", device='cuda'):
+    def __init__(self, config,  preencoded_speech_path, type="train", device='cuda'):
         self.config = config
-        self.root_dir = Path(os.path.expanduser(self.config.datasets_path), self.config.preencoded_speech_path)
+        self.root_dir = Path(os.path.expanduser(self.config.datasets_path), preencoded_speech_path)
         self.data_dir = f"{self.root_dir}/{type}"
         enc_config = load_config(f"{self.root_dir}/config.yaml")
         assert self.config.Encoding == enc_config.Encoding, f"Encoding configuration mismatch. The encoding parameters used for creation of encoded speech stored at {self.root_dir} is different from that of the parameters in the config being passed here."

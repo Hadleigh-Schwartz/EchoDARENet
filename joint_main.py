@@ -1,16 +1,21 @@
 from argparse import ArgumentParser
-from models.cep3_model import Test
-from models.cep4_model import TestAttention
 from fins_lightning_dataloader import DareDataModule
 import torch as t
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.strategies.ddp import DDPStrategy
+from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning import loggers as pl_loggers
+from models.joint_model import JointModel
 from utils.utils import load_config
+
+import argparse
 import random
 import numpy as np
 import os
 os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
+
 
 def main(args):
     # ===========================================================
@@ -21,20 +26,6 @@ def main(args):
     np.random.seed(cfg.random_seed)
     t.manual_seed(cfg.random_seed)
 
-    model = TestAttention(learning_rate = cfg.dare.learning_rate,
-                    nwins = cfg.nwins,
-                    use_transformer = cfg.dare.use_transformer,
-                    alphas = cfg.dare.alphas,
-                    softargmax_beta = cfg.dare.softargmax_beta,
-                    residual=cfg.dare.residual,
-                    delays = cfg.Encoding.delays,
-                    win_size = cfg.Encoding.win_size,
-                    cutoff_freq = cfg.Encoding.cutoff_freq,
-                    sample_rate = cfg.sample_rate,
-                    plot_every_n_steps=cfg.plot_every_n_steps,
-                    norm_cepstra = cfg.dare.norm_cepstra,
-                    cepstrum_target_region = cfg.dare.cep_target_region)
-
     # Data Module
     datamodule = DareDataModule(config=cfg)
 
@@ -43,32 +34,29 @@ def main(args):
         **cfg['ModelCheckpoint'],
         filename = "-{epoch:02d}-{step}-{val_loss:.2f}",
     )
-    
+
+ 
     # create custom logger to allow fig logging
     tensorboard = pl_loggers.TensorBoardLogger('./')
 
+    fins_config = load_config(args.config_path)
+
+    model = JointModel(fins_config)
+
     # PyTorch Lightning Train
     trainer = pl.Trainer(
-        **cfg['Trainer'],
-        callbacks=[ckpt_callback],
-        logger = tensorboard
+        gradient_clip_val = fins_config.fins.gradient_clip_value,
+        callbacks = [ckpt_callback],
+        logger = tensorboard,
+        **cfg['Trainer']
     )
 
     trainer.fit(
         model      = model,
         datamodule = datamodule,
         ckpt_path = args.ckpt_path
-        )
+    )
 
-    # ===========================================================
-    # PyTorch Lightning Test
-    trainer.test(
-        model      = model,
-        datamodule = datamodule,
-        ckpt_path  = "best"
-        )
-    
-    return True
 
 if __name__ == "__main__":
     parser = ArgumentParser()

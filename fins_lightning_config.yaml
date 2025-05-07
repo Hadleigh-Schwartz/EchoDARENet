@@ -1,9 +1,9 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
 datasets_path: ./Datasets 
-speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi". 
-rir_dataset: "MIT" # options: homula, MIT, sim
-preencoded_speech: True # tells dataloader not to encode on the fly, as audio being loaded is already encoded
-preencoded_speech_path: "test5" # relative to datasets_path
+base_speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi". 
+rir_datasets: ["homula", "MIT"] # options: homula, MIT, sim
+# preencoded_speech: True # tells dataloader not to encode on the fly, as audio being loaded is already encoded
+speech_datasets: ["preencoded_test5"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
 random_seed: 42
 nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
 min_early_reverb: 0.007  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
@@ -49,9 +49,13 @@ dare:
   norm_cepstra: False
   cep_target_region: [40, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 
+joint:
+  lr: 0.000055
+  lr_step_size : 80
+  lr_decay_factor : 0.8
 
 DataLoader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 32
   persistent_workers: True
   shuffle: True
@@ -60,16 +64,16 @@ DataLoader:
 
 Trainer:
   limit_train_batches: 20000
-  limit_val_batches: 3
-  limit_test_batches: 3
+  limit_val_batches: 100
+  limit_test_batches: 100
   max_epochs: 100
   num_sanity_val_steps: 1
   accumulate_grad_batches: 1
   log_every_n_steps: 10 # logs every n steps where n iss the number of batches
-  # val_check_interval: 0.05 # val every this fraction of an epoch
-  check_val_every_n_epoch: 1
+  val_check_interval: 0.05 # val every this fraction of an epoch
+  # check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [2]
+  devices: [1]
 
 ModelCheckpoint:
   dirpath: fins_checkpoints

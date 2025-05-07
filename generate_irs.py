@@ -56,8 +56,6 @@ def generate_random_room():
 
     return room
 
-
-
 def generate_random_irs():
     # Generate IRs
     for i in tqdm(range(NUM_IRS), desc="Generating IRs"):

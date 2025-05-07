@@ -62,6 +62,8 @@ class HomulaIRDataset(Dataset):
     def __getitem__(self, idx):
         filename = self.split_filenames[idx]
         audio_data, samplerate = sf.read(filename)
+        # homula is eight channel, so we take the first channel
+        audio_data = audio_data[:,0]
         return audio_data, filename
 
  

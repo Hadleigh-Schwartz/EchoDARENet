@@ -111,6 +111,7 @@ class CepstralDomainDecodingLoss(DecodingLoss):
   
         # compute avg error rate
         all_gt_symbols = gt_symbols_batch.reshape(-1) # (batch_size, num_symbols) -> (batch_size * num_wins)
+
         accuracy = Accuracy(task="multiclass", num_classes=len(self.delays)).to(cepstrum_batch.device)
         sym_err_rate = 1 - accuracy(all_pred_symbols, all_gt_symbols) 
 

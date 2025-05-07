@@ -16,7 +16,7 @@ os.environ['MASTER_ADDR'] = str(os.environ.get('HOST', '::1'))
 
 import torch as t
 from utils.utils import load_config
-from fins_lightning_model import FINS
+from models.fins_lightning_model import FINS
 
 
 
@@ -29,6 +29,8 @@ def main(args):
     np.random.seed(cfg.random_seed)
     t.manual_seed(cfg.random_seed)
 
+    model = FINS(cfg)
+
     # Data Module
     datamodule = DareDataModule(config=cfg)
 
@@ -37,21 +39,17 @@ def main(args):
         **cfg['ModelCheckpoint'],
         filename = "-{epoch:02d}-{step}-{val_loss:.2f}",
     )
-
  
     # create custom logger to allow fig logging
     tensorboard = pl_loggers.TensorBoardLogger('./')
 
-    fins_config = load_config(args.config_path)
-
-    model = FINS(fins_config)
-
     # PyTorch Lightning Train
     trainer = pl.Trainer(
-        gradient_clip_val = fins_config.fins.gradient_clip_value,
+        **cfg['Trainer'],
         callbacks = [ckpt_callback],
         logger = tensorboard,
-        **cfg['Trainer']
+        gradient_clip_val = cfg.fins.gradient_clip_value,
+        
     )
 
     trainer.fit(
