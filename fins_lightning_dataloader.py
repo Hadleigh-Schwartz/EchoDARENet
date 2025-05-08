@@ -7,6 +7,7 @@ from datasets.preencoded_speech_data import EncodedSpeechDataset
 from datasets.mit_rir_data import MitIrSurveyDataset
 from datasets.sim_rir_data import SimIRDataset
 from datasets.homula_rir_data import HomulaIRDataset
+from datasets.gtu_rir_data import GTUIRDataset
 import librosa
 from scipy import signal
 import numpy as np
@@ -42,24 +43,17 @@ class DareDataset(Dataset):
         rir_datasets = []
         for dataset in config.rir_datasets:
             if dataset == "sim":
-                rir_datasets.append(SimIRDataset(config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device))
+                rir_datasets.append(SimIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "homula":
-                rir_datasets.append(HomulaIRDataset(config, type=self.type, device=device))
+                rir_datasets.append(HomulaIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "MIT":
-                rir_datasets.append(MitIrSurveyDataset(config, type=self.type, device=device))
+                rir_datasets.append(MitIrSurveyDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
+            elif dataset == "GTU":
+                rir_datasets.append(GTUIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             else:
                 raise ValueError(f"Selected RIR dataset {dataset} is not valid")
         self.rir_dataset = ConcatRIRDataset(rir_datasets)
        
-        # if self.config.rir_dataset == "sim":
-        #     self.rir_dataset = SimIRDataset(self.config, type=self.type, split_train_val_test_p=self.split_train_val_test_p, device=device)
-        # elif self.config.rir_dataset == "homula":
-        #     self.rir_dataset = HomulaIRDataset(self.config, type=self.type, device=device)
-        # elif self.config.rir_dataset == "MIT":
-        #     self.rir_dataset = MitIrSurveyDataset(self.config, type=self.type, device=device)
-        # else:
-        #     raise ValueError(f"Selected RIR dataset {self.config.rir_dataset} is not valid")
-
         # load the speech dataset
         speech_datasets = []
         self.preencoded_speech = None
@@ -250,12 +244,6 @@ class DareDataset(Dataset):
                 # save image of the original speech
                 speech = self.speech_dataset[idx_speech][0].flatten()
                 speech = np.array(speech)
-                # plt.figure(figsize=(10, 4))
-                # plt.plot(speech)
-                # plt.savefig(f"speech_{idx_speech}.png")
-                # plt.close()      
-                # print(speech.shape, "heyyyy")
-                # print(self.speech_dataset.samplerate, self.samplerate, 'howdy')
                 speech = librosa.resample(speech,
                     orig_sr=self.speech_dataset.samplerate,
                     target_sr=self.samplerate,
@@ -264,12 +252,6 @@ class DareDataset(Dataset):
                     speech,
                     pad_width=(0, np.max((0,self.reverb_speech_duration - len(speech)))),
                 )
-                # save image of the resampled speech
-                # plt.figure(figsize=(10, 4))
-                # plt.plot(speech)
-                # plt.savefig(f"resampled_speech_{idx_speech}.png")
-                # plt.close()
-                # print("final", speech.shape)
                 num_wins = len(speech) // self.win_size
                 symbols = np.random.randint(0, len(self.delays), size = num_wins)
                 speech = speech[:num_wins * self.win_size] # trim the speech to be a multiple of the window size. 
@@ -308,31 +290,7 @@ class DareDataset(Dataset):
                 rir = rir[:self.rir_length]
             ####################
             
-
-            # ###### dare ######
-            # rir,rirfn = self.rir_dataset[idx_rir]
-            # rir = rir.flatten()
-            # rir = rir[~np.isnan(rir)]
-            # rir = librosa.resample(rir,
-            #     orig_sr=self.rir_dataset.samplerate,
-            #     target_sr=self.samplerate,
-            #     res_type='soxr_hq')
-            # rir = rir - np.mean(rir)
-            # rir = rir / np.max(np.abs(rir))
-            # maxI = np.argmax(np.abs(rir))
-            # rir = rir[25:]
-            # rir = rir * signal.windows.tukey(rir.shape[0], alpha=2*25/rir.shape[0], sym=True) # Taper 50 samples at the beginning and end of the RIR
-            # rir = signal.sosfilt(self.rir_sos, rir) # not sure we want this??
-            # maxI = np.argmax(np.abs(rir))
-            # rir = rir / rir[maxI] # scaling
-            # if len(rir) < self.rir_length:
-            #     rir = np.pad(rir, pad_width=(0, np.max((0,self.rir_length - len(rir)))))
-            # elif len(rir) > self.rir_length:
-            #     rir = rir[:self.rir_length]
-            # ##########
-
             # convolve
-      
             enc_reverb_speech = signal.convolve(enc_speech, rir, method='fft', mode = "full")
             unenc_reverb_speech = signal.convolve(speech, rir, method='fft', mode = "full")
 

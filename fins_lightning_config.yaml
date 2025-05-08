@@ -6,7 +6,7 @@ rir_datasets: ["homula", "MIT"] # options: homula, MIT, sim
 speech_datasets: ["preencoded_test5"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
 random_seed: 42
 nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
-min_early_reverb: 0.007  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+min_early_reverb: 0.0  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
 plot_every_n_steps: 250
 data_in_ram: False
 
@@ -50,10 +50,10 @@ dare:
   cep_target_region: [40, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
 
 joint:
-  lr: 0.000055
-  lr_step_size : 80
-  lr_decay_factor : 0.8
-
+  lr: 0.0001
+  alphas: [2000, 0.5, 10, 0] # cepstrum MSE loss weight, symbol error rate weight, RIR STFT loss, RIR similarity
+  # 1e-4, 1, >1, 1e-6
+  
 DataLoader:
   batch_size: 8
   num_workers: 32
@@ -63,14 +63,14 @@ DataLoader:
   pin_memory: True
 
 Trainer:
-  limit_train_batches: 20000
+  limit_train_batches: 10000
   limit_val_batches: 100
   limit_test_batches: 100
   max_epochs: 100
   num_sanity_val_steps: 1
   accumulate_grad_batches: 1
   log_every_n_steps: 10 # logs every n steps where n iss the number of batches
-  val_check_interval: 0.05 # val every this fraction of an epoch
+  val_check_interval: 0.1 # val every this fraction of an epoch
   # check_val_every_n_epoch: 1
   accelerator: gpu
   devices: [1]

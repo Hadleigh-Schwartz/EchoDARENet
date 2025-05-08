@@ -31,7 +31,7 @@ class JointModel(pl.LightningModule):
         self.config = config
         self.nwins = self.config.nwins
         self.norm_cepstra = self.config.dare.norm_cepstra
-        self.alphas = self.config.dare.alphas
+        self.alphas = self.config.joint.alphas
         if self.config.dare.cep_target_region is not None:
             self.cepstrum_target_region = self.config.dare.cep_target_region
         else:
@@ -111,7 +111,7 @@ class JointModel(pl.LightningModule):
         rir_hat_pad = torch.nn.functional.pad(rir_hat, (0, 49152 - rir_hat.shape[2]), "constant", 0)
 
         # Cepstra encoder
-        e1 = self.enc1( enc_reverb_speech_cepstra)
+        e1 = self.enc1(enc_reverb_speech_cepstra)
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
         e4 = self.enc4(self.pool(e3))
@@ -202,7 +202,7 @@ class JointModel(pl.LightningModule):
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-        self.log(loss_type+"total_loss", loss, sync_dist = True )
+        self.log(loss_type+"_loss", loss, sync_dist = True )
         
         return loss
 
@@ -261,7 +261,7 @@ class JointModel(pl.LightningModule):
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
-        self.log(loss_type+"total_loss", loss, sync_dist = True )
+        self.log(loss_type+"_loss", loss, sync_dist = True )
         
         return loss
     
@@ -374,12 +374,7 @@ class JointModel(pl.LightningModule):
         plt.close()
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.config.fins.lr, weight_decay=1e-6)
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=self.config.joint.lr_step_size,
-            gamma=self.config.joint.lr_decay_factor,
-        )
+        optimizer = optim.Adam(self.parameters(), lr=self.config.joint.lr)
+        # return optimizer
+        scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
         return [optimizer], [scheduler]
-
-    

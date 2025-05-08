@@ -66,7 +66,7 @@ def main(args):
         model      = model,
         datamodule = datamodule,
         ckpt_path  = "best"
-        )
+    )
     
     return True
 
