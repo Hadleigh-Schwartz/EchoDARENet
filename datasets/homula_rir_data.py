@@ -8,10 +8,11 @@ import os
 class HomulaIRDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
         self.config = config
-        self.root_dir = Path(os.path.expanduser(self.config['datasets_path']),'homula_ir')
+        self.root_dir = Path(os.path.expanduser(self.config['datasets_path']), 'homula_ir')
         self.type = type
+        
+        self.max_data_len = len(glob.glob(f"{self.root_dir}/*.wav"))
 
-        self.max_data_len = len(glob.glob(str(Path(self.root_dir,"*.wav"))))
 
         # get the sample rate from any file in the directory
         self.samplerate = sf.read(glob.glob(str(Path(self.root_dir,"*.wav")))[0])[1]

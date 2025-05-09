@@ -7,8 +7,10 @@ and that batch elements look as expected.
 from argparse import ArgumentParser
 from fins_lightning_dataloader import DareDataModule
 from datasets.gtu_rir_data import GTUIRDataset
+from datasets.soundcam_rir_data import SoundCamIRDataset
 
 import torch as t
+import matplotlib.pyplot as plt
 from utils.utils import load_config
 import random
 import numpy as np
@@ -32,10 +34,16 @@ def main(args):
     #     print(enc_speech_cepstra.shape)
 
     # Example testing a dataset
-    dataset = GTUIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = SoundCamIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     # iterate over the dataset
     for i in range(len(dataset)):
-        audio_data, file_id = dataset[i]
+        rir_data, file_id = dataset[i]
+        # plot the rir and save it
+        plt.plot(rir_data)
+        plt.title(f"RIR {file_id}")
+        plt.xlim(0, 44100)
+        plt.savefig(f"rir_{file_id}.png")
+        break
   
 if __name__ == "__main__":
     parser = ArgumentParser()

@@ -1,3 +1,8 @@
+"""
+Dataset class for Gthe GTU RIR dataset
+https://github.com/mehmetpekmezci/gtu-rir/tree/master
+"""
+
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from pathlib import Path
