@@ -7,6 +7,7 @@ speech_datasets: ["preencoded_test5"] # relative to datasets_path. If the name o
 random_seed: 42
 nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
 min_early_reverb: 0.0  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
+align_ir: True # whether to align the IR so the direct path is at the start of the IR. 
 plot_every_n_steps: 250
 data_in_ram: False
 

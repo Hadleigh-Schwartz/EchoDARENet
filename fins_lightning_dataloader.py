@@ -8,6 +8,7 @@ from datasets.mit_rir_data import MitIrSurveyDataset
 from datasets.sim_rir_data import SimIRDataset
 from datasets.homula_rir_data import HomulaIRDataset
 from datasets.gtu_rir_data import GTUIRDataset
+from datasets.soundcam_rir_data import SoundCamIRDataset
 import librosa
 from scipy import signal
 import numpy as np
@@ -50,6 +51,8 @@ class DareDataset(Dataset):
                 rir_datasets.append(MitIrSurveyDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "GTU":
                 rir_datasets.append(GTUIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
+            elif dataset == "soundcam":
+                rir_datasets.append(SoundCamIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             else:
                 raise ValueError(f"Selected RIR dataset {dataset} is not valid")
         self.rir_dataset = ConcatRIRDataset(rir_datasets)
@@ -80,16 +83,6 @@ class DareDataset(Dataset):
                 raise ValueError(f"Selected speech dataset {dataset} is not valid")
         self.speech_dataset = ConcatDataset(speech_datasets)
 
-        # if self.preencoded_speech:
-        #     self.speech_dataset = EncodedSpeechDataset(self.config, type=self.type)
-        # else:    
-        #     if self.config.speech_dataset == "HiFi":
-        #         self.speech_dataset = HiFiSpeechDataset(self.config, type=self.type)
-        #     elif self.config.speech_dataset == "LibriSpeech":
-        #         self.speech_dataset = LibriSpeechDataset(self.config, type=self.type)
-        #     else:
-        #         raise ValueError(f"Selected speech dataset {self.config.speech_dataset} is not valid")
-        
         if type == "train":
             self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_train_batches
         elif type == "val":
@@ -99,6 +92,7 @@ class DareDataset(Dataset):
         
         self.samplerate = self.config.sample_rate
         self.rir_length = int(config.fins.rir_duration * config.sample_rate)  # 1 sec = 48000 samples
+        self.align_ir = config.align_ir
       
         self.data_in_ram = config.data_in_ram
         if self.data_in_ram:
@@ -283,6 +277,23 @@ class DareDataset(Dataset):
                 orig_sr=self.rir_dataset.samplerate,
                 target_sr=self.samplerate,
                 res_type='soxr_hq')
+            if self.align_ir:
+                # find energy of each frame
+                frame_size = 50  
+                frame_energies = []
+                for i in range(0, len(rir), frame_size):
+                    frame = rir[i:i+frame_size]
+                    energy = np.sum(frame**2)
+                    frame_energies.append(energy)
+                # Find when real speech starts, defined as the first frame in some upper percentile of frame energies
+                upper_percentile = np.percentile(frame_energies, 99)
+                # find the first frame in the upper quintile
+                first_index = 0
+                for i in range(len(frame_energies)):
+                    if frame_energies[i] > upper_percentile:
+                        first_index = i * frame_size
+                        break
+                rir = rir[first_index:]
             rir /= np.max(np.abs(rir)) * 0.999
             if len(rir) < self.rir_length:
                 rir = np.pad(rir, (0, self.rir_length - len(rir)))
