@@ -9,6 +9,7 @@ from datasets.sim_rir_data import SimIRDataset
 from datasets.homula_rir_data import HomulaIRDataset
 from datasets.gtu_rir_data import GTUIRDataset
 from datasets.soundcam_rir_data import SoundCamIRDataset
+from datasets.ears_rir_data import EARSIRDataset
 import librosa
 from scipy import signal
 import numpy as np
@@ -53,6 +54,8 @@ class DareDataset(Dataset):
                 rir_datasets.append(GTUIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "soundcam":
                 rir_datasets.append(SoundCamIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
+            elif dataset == "EARS":
+                rir_datasets.append(EARSIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             else:
                 raise ValueError(f"Selected RIR dataset {dataset} is not valid")
         self.rir_dataset = ConcatRIRDataset(rir_datasets)
@@ -83,6 +86,7 @@ class DareDataset(Dataset):
                 raise ValueError(f"Selected speech dataset {dataset} is not valid")
         self.speech_dataset = ConcatDataset(speech_datasets)
 
+        # get the length of the dataset
         if type == "train":
             self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_train_batches
         elif type == "val":
@@ -90,15 +94,7 @@ class DareDataset(Dataset):
         elif type == "test":
             self.dataset_len = self.config.DataLoader.batch_size * self.config.Trainer.limit_test_batches
         
-        self.samplerate = self.config.sample_rate
-        self.rir_length = int(config.fins.rir_duration * config.sample_rate)  # 1 sec = 48000 samples
-        self.align_ir = config.align_ir
-      
-        self.data_in_ram = config.data_in_ram
-        if self.data_in_ram:
-            self.data = []
-            self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
-
+        # initialize encoding parameters
         self.amplitude = config.Encoding.amplitude
         self.delays = config.Encoding.delays
         self.win_size = config.Encoding.win_size
@@ -106,19 +102,22 @@ class DareDataset(Dataset):
         self.hanning_factor = config.Encoding.hanning_factor
         self.decoding = config.Encoding.decoding
         assert self.decoding in ["autocepstrum", "cepstrum"], "Invalid decoding method specified. Choose either 'autocepstrum' or 'cepstrum'."
-        self.filters = create_filter_bank(self.kernel, self.delays, self.amplitude)
-
+        self.filters = create_filter_bank(self.kernel, self.delays, self.amplitude) # precreate filters for encoding, to speed up on-the-fly encoding (if used)
         self.cutoff_freq = config.Encoding.cutoff_freq
+
+        # initialize other data parameters
+        self.samplerate = self.config.sample_rate
+        self.rir_length = int(config.fins.rir_duration * config.sample_rate)  # 1 sec = 48000 samples
+        self.align_ir = config.align_ir
+        self.data_in_ram = config.data_in_ram
+        if self.data_in_ram:
+            self.data = []
+            self.idx_to_data = -np.ones((len(self.speech_dataset) * len(self.rir_dataset),),dtype=np.int32) 
         self.nwins = config.nwins
         self.normalize = config.fins.normalize
         self.noise_condition_length = config.fins.noise_condition_length
         self.reverb_speech_duration = self.nwins * self.win_size
         
-        # TODO: remove???
-        self.rir_sos = signal.butter(6, 40, 'hp', fs=self.samplerate, output='sos') # Seems that this is largely for denoising the RIRs??
-
-        
-    
     def __len__(self):
         return self.dataset_len
     
@@ -278,22 +277,24 @@ class DareDataset(Dataset):
                 target_sr=self.samplerate,
                 res_type='soxr_hq')
             if self.align_ir:
-                # find energy of each frame
-                frame_size = 50  
-                frame_energies = []
-                for i in range(0, len(rir), frame_size):
-                    frame = rir[i:i+frame_size]
-                    energy = np.sum(frame**2)
-                    frame_energies.append(energy)
-                # Find when real speech starts, defined as the first frame in some upper percentile of frame energies
-                upper_percentile = np.percentile(frame_energies, 99)
-                # find the first frame in the upper quintile
-                first_index = 0
-                for i in range(len(frame_energies)):
-                    if frame_energies[i] > upper_percentile:
-                        first_index = i * frame_size
-                        break
-                rir = rir[first_index:]
+                # # find energy of each frame (version 1)
+                # frame_size = 50  
+                # frame_energies = []
+                # for i in range(0, len(rir), frame_size):
+                #     frame = rir[i:i+frame_size]
+                #     energy = np.sum(frame**2)
+                #     frame_energies.append(energy)
+                # # Find when real speech starts, defined as the first frame in some upper percentile of frame energies
+                # upper_percentile = np.percentile(frame_energies, 99)
+                # # find the first frame in the upper quintile
+                # first_index = 0
+                # for i in range(len(frame_energies)):
+                #     if frame_energies[i] > upper_percentile:
+                #         first_index = i * frame_size
+                #         break
+                # rir = rir[first_index:]
+                max_id = np.argmax(rir)
+                rir = rir[max_id:]
             rir /= np.max(np.abs(rir)) * 0.999
             if len(rir) < self.rir_length:
                 rir = np.pad(rir, (0, self.rir_length - len(rir)))

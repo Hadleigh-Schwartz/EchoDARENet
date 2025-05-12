@@ -48,6 +48,7 @@ def main(args):
         gradient_clip_val = fins_config.fins.gradient_clip_value,
         callbacks = [ckpt_callback],
         logger = tensorboard,
+        # strategy = DDPStrategy(process_group_backend="gloo"),
         **cfg['Trainer']
     )
 

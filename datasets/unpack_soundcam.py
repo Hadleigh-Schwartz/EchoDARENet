@@ -13,8 +13,8 @@ import glob
 import numpy as np
 import os
 
-soundcam_data_path = "../Datasets/SoundCam"
-output_path = "../Datasets/SoundCamFlat"
+soundcam_data_path = "/media/storage/hadleigh/reverb_speech_data/SoundCam"
+output_path = "/media/storage/hadleigh/reverb_speech_data/SoundCamFlat"
 if not os.path.exists(output_path):
     os.makedirs(output_path)
 subfolders = glob.glob(f"{soundcam_data_path}/*")

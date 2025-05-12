@@ -8,7 +8,7 @@ import os
 class HomulaIRDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
         self.config = config
-        self.root_dir = Path(os.path.expanduser(self.config['datasets_path']), 'homula_ir')
+        self.root_dir = os.path.join(os.path.expanduser(self.config['datasets_path']), 'homula_ir')
         self.type = type
         
         self.max_data_len = len(glob.glob(f"{self.root_dir}/*.wav"))

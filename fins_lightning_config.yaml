@@ -1,7 +1,7 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
-datasets_path: ./Datasets 
+datasets_path: /media/storage/hadleigh/reverb_speech_data/
 base_speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi". 
-rir_datasets: ["homula", "MIT"] # options: homula, MIT, sim
+rir_datasets: ["MIT", "homula", "soundcam"] # options: homula, MIT, sim, soundcam, GTU
 # preencoded_speech: True # tells dataloader not to encode on the fly, as audio being loaded is already encoded
 speech_datasets: ["preencoded_test5"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
 random_seed: 42
@@ -74,8 +74,7 @@ Trainer:
   val_check_interval: 0.1 # val every this fraction of an epoch
   # check_val_every_n_epoch: 1
   accelerator: gpu
-  devices: [1]
-
+  devices: [3]
 ModelCheckpoint:
   dirpath: fins_checkpoints
   every_n_train_steps: 1000
@@ -87,7 +86,3 @@ AdvancedProfiler:
 
 LearningRateMonitor:
   logging_interval: epoch
-
-DDPStrategy:
-  process_group_backend: gloo
-  find_unused_parameters: False
