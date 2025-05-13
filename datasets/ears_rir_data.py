@@ -21,7 +21,7 @@ class EARSIRDataset(Dataset):
         # Splits for RIRs, defined by EARS here https://github.com/sp-uhh/ears_benchmark/blob/main/generate_ears_reverb.py#L119
         rir_files = {
             "train": [],
-            "valid": [],
+            "val": [],
             "test": [],
         }
 
@@ -33,7 +33,7 @@ class EARSIRDataset(Dataset):
 
         # AIR dataset
         dir = os.path.join(self.root_dir, "AIR", "AIR_1_4", "AIR_wav_files")
-        rir_files["valid"] += sorted(glob.glob(os.path.join(dir, "*.wav")))
+        rir_files["val"] += sorted(glob.glob(os.path.join(dir, "*.wav")))
 
         # ARNI dataset
         dir = os.path.join(self.root_dir, "ARNI")

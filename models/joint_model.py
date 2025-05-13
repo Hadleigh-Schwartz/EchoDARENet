@@ -178,24 +178,26 @@ class JointModel(pl.LightningModule):
         unenc_stft_loss = unenc_stft_loss_dict["total"]
         sum_stft_loss = enc_stft_loss + unenc_stft_loss
 
-        # Compute MSE of the enc and unenc RIRs
+        # Compute MSE and STFT loss of the enc and unenc RIRs
         rir_mse = nn.functional.mse_loss(enc_rir_hat, unenc_rir_hat)
+        rir_stft = self.fins.stft_loss_fn(enc_rir_hat, unenc_rir_hat)["total"]
 
         # Cepstral loss
         cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
         
         # Final loss
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + sum_stft_loss + rir_mse * 1000
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * sum_stft_loss + self.alphas[3] * rir_stft
 
         if batch_idx % self.plot_every_n_steps == 0:
             self.plot_rirs(rir, enc_rir_hat, batch_idx, loss_type=loss_type)
-            self.make_cepstra_plot(enc_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols, loss_type=loss_type)
-
+            self.make_cepstra_plot(enc_reverb_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols, loss_type=loss_type)
+      
         self.log(loss_type+"_enc_stft_loss" + loss_type, enc_stft_loss, sync_dist = True )
         self.log(loss_type+"_unenc_stft_loss" + loss_type, unenc_stft_loss, sync_dist = True )
         self.log(loss_type+"_sum_stft_loss", sum_stft_loss, sync_dist = True )
         self.log(loss_type+"_rir_mse" , rir_mse, sync_dist = True )
+        self.log(loss_type+"_rir_stft" , rir_stft, sync_dist = True )
         self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
         self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )
@@ -238,23 +240,25 @@ class JointModel(pl.LightningModule):
         unenc_stft_loss = unenc_stft_loss_dict["total"]
         sum_stft_loss = enc_stft_loss + unenc_stft_loss
 
-        # Compute MSE of the enc and unenc RIRs
+        # Compute MSE and STFT loss of the enc and unenc RIRs
         rir_mse = nn.functional.mse_loss(enc_rir_hat, unenc_rir_hat)
-        
+        rir_stft = self.fins.stft_loss_fn(enc_rir_hat, unenc_rir_hat)["total"]
+
         # Cepstral loss
         cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
         
         # Final loss
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + sum_stft_loss + rir_mse * 1000
+        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + self.alphas[2] * sum_stft_loss + self.alphas[3] * rir_stft
 
         self.plot_rirs(rir, enc_rir_hat, batch_idx, loss_type=loss_type)
-        self.make_cepstra_plot(enc_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols, loss_type=loss_type)
-        
+        self.make_cepstra_plot(enc_reverb_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols, loss_type=loss_type)
+      
         self.log(loss_type+"_enc_stft_loss" + loss_type, enc_stft_loss, sync_dist = True )
         self.log(loss_type+"_unenc_stft_loss" + loss_type, unenc_stft_loss, sync_dist = True )
         self.log(loss_type+"_sum_stft_loss", sum_stft_loss, sync_dist = True )
         self.log(loss_type+"_rir_mse" , rir_mse, sync_dist = True )
+        self.log(loss_type+"_rir_stft" , rir_stft, sync_dist = True )
         self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
         self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )

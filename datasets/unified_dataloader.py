@@ -1,6 +1,3 @@
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, ConcatDataset
-from pytorch_lightning import LightningDataModule
-
 from datasets.librispeech_data import LibriSpeechDataset
 from datasets.hifi_speech_data import HiFiSpeechDataset
 from datasets.preencoded_speech_data import EncodedSpeechDataset
@@ -10,15 +7,15 @@ from datasets.homula_rir_data import HomulaIRDataset
 from datasets.gtu_rir_data import GTUIRDataset
 from datasets.soundcam_rir_data import SoundCamIRDataset
 from datasets.ears_rir_data import EARSIRDataset
+
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, ConcatDataset
+from pytorch_lightning import LightningDataModule
 import librosa
 from scipy import signal
 import numpy as np
-import torch as t
 import copy
 import os
 import sys
-import soundfile as sf
-import matplotlib.pyplot as plt
 import torch
 
 # append echo encoding parent dir to path
@@ -32,7 +29,7 @@ class ConcatRIRDataset(ConcatDataset):
         super().__init__(datasets)
         self.samplerate = datasets[0].samplerate
   
-class DareDataset(Dataset):
+class SPDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
       
         self.type = type
@@ -427,7 +424,7 @@ def batch_sampler(config, type="train"):
     """
     For more control over batch sampling
     """
-    dummy_dataset = DareDataset(config, type=type)
+    dummy_dataset = SPDataset(config, type=type)
     dataset_len = len(dummy_dataset)
     batch_size = config.DataLoader.batch_size
     # dividing the dataset into batches
@@ -443,22 +440,22 @@ def batch_sampler(config, type="train"):
     return indices   
 
 
-def DareDataloader(config,type="train"):
+def SPDataloader(config,type="train"):
     cfg = copy.deepcopy(config)
     if type != "train":
         cfg['DataLoader']['shuffle'] = False
 
-    return DataLoader(DareDataset(cfg,type),**cfg['DataLoader'])
-    # return DataLoader(DareDataset(cfg,type), num_workers = cfg["DataLoader"]["num_workers"], persistent_workers = cfg["DataLoader"]["persistent_workers"], pin_memory = cfg["DataLoader"]["pin_memory"], 
+    return DataLoader(SPDataset(cfg,type),**cfg['DataLoader'])
+    # return DataLoader(SPDataset(cfg,type), num_workers = cfg["DataLoader"]["num_workers"], persistent_workers = cfg["DataLoader"]["persistent_workers"], pin_memory = cfg["DataLoader"]["pin_memory"], 
     #                    batch_sampler=batch_sampler(cfg, type))
 
-class DareDataModule(LightningDataModule):
+class SPDataModule(LightningDataModule):
     def __init__(self,config):
         super().__init__()
         self.config = config
     def train_dataloader(self):
-        return DareDataloader(type="train",config=self.config)
+        return SPDataloader(type="train",config=self.config)
     def val_dataloader(self):
-        return DareDataloader(type="val",config=self.config)
+        return SPDataloader(type="val",config=self.config)
     def test_dataloader(self):
-        return DareDataloader(type="test",config=self.config)
+        return SPDataloader(type="test",config=self.config)
