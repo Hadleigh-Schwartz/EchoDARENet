@@ -19,6 +19,7 @@ Encoding: # echo encoding params
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
   cutoff_freq: 1000
   hanning_factor: 4
+  softargmax_beta : 10000000 # decoding
 
 fins:
   rir_duration: 1.0
@@ -40,11 +41,10 @@ fins:
   lr_step_size : 80
   lr_decay_factor : 0.8
 
-dare:
+unet:
   learning_rate: 0.0001 
   use_transformer: True
   alphas: [2000, 0.5, 10, 0] # cepstrum MSE loss weight, symbol error rate weight, full cepstrum MES loss weight, average error reduction loss weight
-  softargmax_beta : 10000000
   residual: True
   norm_cepstra: False
   cep_target_region: [40, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below
@@ -55,7 +55,7 @@ joint:
   # 1e-4, 1, >1, >1 (SFTF), 1e-6 (MSE)
   
 DataLoader:
-  batch_size: 8
+  batch_size: 48
   num_workers: 32
   persistent_workers: True
   shuffle: True

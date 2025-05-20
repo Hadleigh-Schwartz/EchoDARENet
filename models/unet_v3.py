@@ -1,148 +1,124 @@
+"""
+UNet with dilated, stride=1 convolutions, max pooling to reduce spatial dimensions, and
+both a transposed and normal convolutions for decoder layers.
+"""
+
 from torch import optim, nn
 from torch.optim import lr_scheduler
 import pytorch_lightning as pl
 import torch as t
-from torch.autograd import Function
 import torch.utils.data
-import torchaudio as ta
 
 import matplotlib.pyplot as plt
 import numpy as np
-import math
-from colorama import Fore, Style
 
 from decoding import CepstralDomainDecodingLoss
 
-
-
-class ReverseLayerF(Function):
-
-    @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.alpha
-
-        return output, None
-
-class EchoSpeechDAREUnet(pl.LightningModule):
-    def __init__(self,
-        learning_rate=1e-3,
-        nwins=16,
-        use_transformer=True, 
-        alphas = [0, 0, 0, 0, 0],
-        softargmax_beta = 100000,
-        residual = False,
-        delays = None,
-        win_size = None,
-        cutoff_freq = None,
-        sample_rate = None,
-        plot_every_n_steps=100,
-        norm_cepstra = True,
-        cepstrum_target_region=None
-        ):
+class DoubleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 2"""
+    def __init__(self, in_channels, out_channels, dilation=1):
         super().__init__()
-        self.name = "EchoSpeechDAREUnet"
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
 
-        self.has_init = False
-        self.learning_rate = learning_rate
-        self.plot_every_n_steps = plot_every_n_steps
-        self.nwins = nwins
-        self.use_transformer = use_transformer
-        self.residual = residual
-        self.norm_cepstra = norm_cepstra
-        self.alphas = alphas
-        if cepstrum_target_region is not None:
-            self.cepstrum_target_region = cepstrum_target_region
+    def forward(self, x):
+        return self.double_conv(x)
+
+class UNetV3(pl.LightningModule):
+    """
+    UNet with dilated, stride=1 convolutions, max pooling to reduce spatial dimensions, and
+    both a transposed and normal convolutions for decoder layers.
+    """
+    def __init__(self, cfg):
+        super().__init__()
+        self.name = "UNetV3"
+
+        self.learning_rate = cfg.unet.learning_rate
+        self.plot_every_n_steps = cfg.plot_every_n_steps
+        self.nwins = cfg.nwins
+        self.use_transformer = cfg.unet.use_transformer
+        self.residual = cfg.unet.residual
+        self.norm_cepstra = cfg.unet.norm_cepstra
+        self.alphas = cfg.unet.alphas
+        if cfg.unet.cep_target_region is not None:
+            self.cepstrum_target_region = cfg.unet.cep_target_region
         else:
-            self.cepstrum_target_region = [delays[0] - 10, delays[-1] + 50] # default
+            self.cepstrum_target_region = [cfg.Encoding.delays[0] - 10, cfg.Encoding.delays[-1] + 50] # default
 
         self.lr_scheduler_gamma = 0.9
         self.eps = 1e-16
 
         #initialize encoding parameters and decoding loss
-        self.delays = delays
-        self.win_size = win_size
-        self.cutoff_freq = cutoff_freq
-        self.sample_rate = sample_rate
-        self.decoding_loss = CepstralDomainDecodingLoss(delays, 
-                                          win_size, 
-                                          cutoff_freq, 
-                                          sample_rate, 
-                                          softargmax_beta)
+        self.delays = cfg.Encoding.delays
+        self.win_size = cfg.Encoding.win_size
+        self.cutoff_freq = cfg.Encoding.cutoff_freq
+        self.sample_rate = cfg.sample_rate
+        self.decoding_loss = CepstralDomainDecodingLoss(cfg.Encoding.delays, 
+                                          cfg.Encoding.win_size, 
+                                          cfg.Encoding.cutoff_freq, 
+                                          cfg.sample_rate, 
+                                          cfg.Encoding.softargmax_beta)
 
         self.init()
 
-    def init(self):
-        k = 3
-        s = 2
-        p_drop = 0.5
-        leaky_slope = 0.2
-        
-        self.conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
-        self.conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
-        self.conv3 = nn.Sequential(nn.Conv2d( 128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
-        self.conv4 = nn.Sequential(nn.Conv2d(256, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.LeakyReLU(leaky_slope))
-        self.conv5 = nn.Sequential(nn.Conv2d(512, 512, k, stride=s, padding=k//2), nn.BatchNorm2d(512), nn.ReLU())
-        
-        if self.use_transformer:
-            self.transformer = nn.Transformer(d_model=512, nhead=4, num_encoder_layers=5, num_decoder_layers=5, batch_first=True)
+    
+    def init(self, in_channels=2, out_channels=2, base_c=64):
+        # Encoder with increasing dilation
+        self.enc1 = DoubleConv(in_channels, base_c, dilation=1)
+        self.enc2 = DoubleConv(base_c, base_c*2, dilation=2)
+        self.enc3 = DoubleConv(base_c*2, base_c*4, dilation=4)
+        self.enc4 = DoubleConv(base_c*4, base_c*8, dilation=8)
 
-        self.deconv1 = nn.Sequential(nn.ConvTranspose2d(512, 512, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(512), nn.Dropout2d(p=p_drop), nn.ReLU())
-        self.deconv2 = nn.Sequential(nn.ConvTranspose2d(1024, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-        self.deconv3 = nn.Sequential(nn.ConvTranspose2d(512,  128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128),  nn.Dropout2d(p=p_drop), nn.ReLU())
-        self.deconv4 = nn.Sequential(nn.ConvTranspose2d(256,   64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64), nn.ReLU()) # important to have Tanh not previous version's ReLU otherwise can't be negative
-        self.deconv5 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1),  nn.BatchNorm2d(2), nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+        self.pool = nn.MaxPool2d(2)
 
-        # leaky_slope = 0.01
-        
-        # self.conv1 = nn.Sequential(nn.Conv2d(  2,  64, k, stride=s, padding=k//2), nn.LeakyReLU(leaky_slope))
-        # self.conv2 = nn.Sequential(nn.Conv2d( 64, 128, k, stride=s, padding=k//2), nn.BatchNorm2d(128), nn.LeakyReLU(leaky_slope))
-        # self.conv3 = nn.Sequential(nn.Conv2d(128, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.LeakyReLU(leaky_slope))
-        # self.conv4 = nn.Sequential(nn.Conv2d(256, 256, k, stride=s, padding=k//2), nn.BatchNorm2d(256), nn.ReLU())
-        
-        # if self.use_transformer:
-        #     self.transformer = nn.Transformer(d_model=256, nhead=4, num_encoder_layers=5, num_decoder_layers=5, batch_first=True)
+        # Bottleneck
+        self.bottleneck = DoubleConv(base_c*8, base_c*16)
 
-        # self.deconv1 = nn.Sequential(nn.ConvTranspose2d(256, 256, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(256), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.deconv2 = nn.Sequential(nn.ConvTranspose2d(512, 128, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(128), nn.Dropout2d(p=p_drop), nn.ReLU())
-        # self.deconv3 = nn.Sequential(nn.ConvTranspose2d(256,  64, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(64),  nn.ReLU())
-        # self.deconv4 = nn.Sequential(nn.ConvTranspose2d(128,   2, k, stride=s, padding=k//2, output_padding=s-1), nn.BatchNorm2d(2), nn.Tanh()) # important to have Tanh not previous version's ReLU otherwise can't be negative
+        # Decoder
+        self.up4 = nn.ConvTranspose2d(base_c*16, base_c*8, kernel_size=2, stride=2)
+        self.dec4 = DoubleConv(base_c*16, base_c*8)
+
+        self.up3 = nn.ConvTranspose2d(base_c*8, base_c*4, kernel_size=2, stride=2)
+        self.dec3 = DoubleConv(base_c*8, base_c*4)
+
+        self.up2 = nn.ConvTranspose2d(base_c*4, base_c*2, kernel_size=2, stride=2)
+        self.dec2 = DoubleConv(base_c*4, base_c*2)
+
+        self.up1 = nn.ConvTranspose2d(base_c*2, base_c, kernel_size=2, stride=2)
+        self.dec1 = DoubleConv(base_c*2, base_c)
+
+        self.final_conv = nn.Conv2d(base_c, out_channels, kernel_size=1)
 
     def predict(self, x):
-        if self.residual:
-            residual = x
+        # Encoder
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool(e1))
+        e3 = self.enc3(self.pool(e2))
+        e4 = self.enc4(self.pool(e3))
 
-        c1Out = self.conv1(x)     
-        c2Out = self.conv2(c1Out) 
-        c3Out = self.conv3(c2Out) 
-        c4Out = self.conv4(c3Out) 
-        c5Out = self.conv5(c4Out) 
-    
-        if self.use_transformer:
-            c5Out = self.transformer(\
-                c5Out.squeeze().permute((0,2,1)), \
-                c5Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
-            # c4Out = self.transformer(\
-            #     c4Out.squeeze().permute((0,2,1)), \
-            #     c4Out.squeeze().permute((0,2,1))).permute((0,2,1)).unsqueeze(-1)
-        
-        d1Out = self.deconv1(c5Out) 
-        d2Out = self.deconv2(t.cat((d1Out, c4Out), dim=1)) 
-        d3Out = self.deconv3(t.cat((d2Out, c3Out), dim=1)) 
-        d4Out = self.deconv4(t.cat((d3Out, c2Out), dim=1)) 
-        d5Out = self.deconv5(t.cat((d4Out, c1Out), dim=1)) 
-   
-        if self.residual:
-            cep_out = d5Out + residual
-        else:
-            cep_out = d5Out
+        # Bottleneck
+        b = self.bottleneck(self.pool(e4))
 
-        return cep_out
+        # Decoder
+        d4 = self.up4(b)
+        d4 = self.dec4(torch.cat([d4, e4], dim=1))
+
+        d3 = self.up3(d4)
+        d3 = self.dec3(torch.cat([d3, e3], dim=1))
+
+        d2 = self.up2(d3)
+        d2 = self.dec2(torch.cat([d2, e2], dim=1))
+
+        d1 = self.up1(d2)
+        d1 = self.dec1(torch.cat([d1, e1], dim=1))
+
+        return self.final_conv(d1)
 
     def training_step(self, batch, batch_idx):
         loss_type = "train"
@@ -151,17 +127,16 @@ class EchoSpeechDAREUnet(pl.LightningModule):
                 rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
         enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float()
         enc_speech_cepstra = enc_speech_cepstra.float()
-        # num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
-        # num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
-
-        # x, ys, zs, ys_t, y, yt, _ , symbols, num_errs_no_reverb, num_errs_reverb, idxs_rir = batch # reverberant speech cepstra, clean speech cepstra, RIR fft, RIR time domain, symbols echo-encoded into speech, error rate of echo-decoding pre-reverb
-        # ys = ys.float()
-        # zs = zs.float()
-        # yt = yt.float()
-        # x = x.float()
-        # y = y.float()
+       
+        # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra[:,:,:512,:]   
+        #  
         enc_speech_cepstra_hat = self.predict(enc_reverb_speech_cepstra) 
+        
 
+        # append zeros at the second dimension to get back to same size as enc_speech_cepstra
+        enc_speech_cepstra_hat = t.cat((enc_speech_cepstra_hat, t.zeros(enc_speech_cepstra.shape[0], enc_speech_cepstra.shape[1], enc_speech_cepstra.shape[2]-enc_speech_cepstra_hat.shape[2],enc_speech_cepstra.shape[3]).to(enc_speech_cepstra_hat)), dim=2)
+        enc_reverb_speech_cepstra = t.cat((enc_reverb_speech_cepstra, t.zeros(enc_speech_cepstra.shape[0], enc_speech_cepstra.shape[1], enc_speech_cepstra.shape[2]-enc_reverb_speech_cepstra.shape[2],enc_speech_cepstra.shape[3] ).to(enc_reverb_speech_cepstra)), dim=2)
+        
         if batch_idx % self.plot_every_n_steps == 0:
             plot = True
         else:
@@ -182,7 +157,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
       
         if plot:
             self.make_cepstra_plot(enc_reverb_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols)
-            self.weight_histograms()
+            # self.weight_histograms()
             
         return loss
 
@@ -194,10 +169,14 @@ class EchoSpeechDAREUnet(pl.LightningModule):
                 rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
         enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float()
         enc_speech_cepstra = enc_speech_cepstra.float()
-        # num_errs_no_reverb = torch.tensor(0) # DUMMY FOR NOW
-        # num_errs_reverb = torch.tensor(0) # DUMMY FOR NOW
 
+        # enc_reverb_speech_cepstra = enc_reverb_speech_cepstra[:,:,:512,:]
+   
         enc_speech_cepstra_hat = self.predict(enc_reverb_speech_cepstra) 
+
+        # append zeros at the second dimension to get back to same size as enc_speech_cepstra
+        enc_speech_cepstra_hat = t.cat((enc_speech_cepstra_hat, t.zeros(enc_speech_cepstra.shape[0], enc_speech_cepstra.shape[1], enc_speech_cepstra.shape[2]-enc_speech_cepstra_hat.shape[2],enc_speech_cepstra.shape[3] ).to(enc_speech_cepstra_hat)), dim=2)
+        enc_reverb_speech_cepstra = t.cat((enc_reverb_speech_cepstra, t.zeros(enc_speech_cepstra.shape[0], enc_speech_cepstra.shape[1], enc_speech_cepstra.shape[2]-enc_reverb_speech_cepstra.shape[2],enc_speech_cepstra.shape[3] ).to(enc_reverb_speech_cepstra)), dim=2)
 
         cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
         sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
@@ -370,7 +349,7 @@ class EchoSpeechDAREUnet(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
-        # return optimizer
+        # return optimizer # return here like so if you don't want to use a scheduler
         scheduler = lr_scheduler.ExponentialLR(optimizer, self.lr_scheduler_gamma, self.current_epoch-1)
         return [optimizer], [scheduler]
 

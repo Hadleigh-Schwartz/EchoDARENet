@@ -30,10 +30,10 @@ class JointModel(pl.LightningModule):
 
         self.config = config
         self.nwins = self.config.nwins
-        self.norm_cepstra = self.config.dare.norm_cepstra
+        self.norm_cepstra = self.config.unet.norm_cepstra
         self.alphas = self.config.joint.alphas
-        if self.config.dare.cep_target_region is not None:
-            self.cepstrum_target_region = self.config.dare.cep_target_region
+        if self.config.unet.cep_target_region is not None:
+            self.cepstrum_target_region = self.config.unet.cep_target_region
         else:
             self.cepstrum_target_region = [self.config.Encoding.delays[0] - 10, self.config.Encoding.delays[-1] + 50] # default
 
@@ -50,7 +50,7 @@ class JointModel(pl.LightningModule):
                                           self.win_size, 
                                           self.cutoff_freq, 
                                           self.sample_rate, 
-                                          self.config.dare.softargmax_beta)
+                                          self.config.Encoding.softargmax_beta)
 
 
         self.fins = FINS(config)

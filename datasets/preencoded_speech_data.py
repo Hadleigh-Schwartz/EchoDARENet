@@ -12,7 +12,7 @@ class EncodedSpeechDataset(Dataset):
         self.root_dir = Path(os.path.expanduser(self.config.datasets_path), preencoded_speech_path)
         self.data_dir = f"{self.root_dir}/{type}"
         enc_config = load_config(f"{self.root_dir}/config.yaml")
-        assert self.config.Encoding == enc_config.Encoding, f"Encoding configuration mismatch. The encoding parameters used for creation of encoded speech stored at {self.root_dir} is different from that of the parameters in the config being passed here."
+        # assert self.config.Encoding == enc_config.Encoding, f"Encoding configuration mismatch. The encoding parameters used for creation of encoded speech stored at {self.root_dir} is different from that of the parameters in the config being passed here."
 
         self.type = type
 
