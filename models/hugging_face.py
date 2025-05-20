@@ -1,7 +1,3 @@
-"""
-UNet with dilated convolutions, nonzero stride to reduce spatial dimensions, 
-and only transposed convolutions for decoder layers.
-"""
 
 from torch import optim, nn
 from torch.optim import lr_scheduler
@@ -9,46 +5,204 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import torch as t
 import torch.utils.data
-
 import matplotlib.pyplot as plt
 import numpy as np
+from typing import Optional, Tuple, Union
 
 from decoding import CepstralDomainDecodingLoss
 
-class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size = 3, dilation=1, stride = 1):
+from diffusers import UNet2DModel, ConfigMixin, ModelMixin
+from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
+
+
+class HuggingChild(UNet2DModel):
+    def __init__(self,
+        sample_size: Optional[Union[int, Tuple[int, int]]] = None,
+        in_channels: int = 3,
+        out_channels: int = 3,
+        center_input_sample: bool = False,
+        down_block_types: Tuple[str, ...] = ("DownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D"),
+        mid_block_type: Optional[str] = "UNetMidBlock2D",
+        up_block_types: Tuple[str, ...] = ("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D", "UpBlock2D"),
+        block_out_channels: Tuple[int, ...] = (224, 448, 672, 896),
+        layers_per_block: int = 2,
+        mid_block_scale_factor: float = 1,
+        downsample_padding: int = 1,
+        downsample_type: str = "conv",
+        upsample_type: str = "conv",
+        dropout: float = 0.0,
+        act_fn: str = "silu",
+        attention_head_dim: Optional[int] = 8,
+        norm_num_groups: int = 32,
+        attn_norm_num_groups: Optional[int] = None,
+        norm_eps: float = 1e-5,
+        resnet_time_scale_shift: str = "default",
+        add_attention: bool = True
+        ):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size= kernel_size, padding=dilation, dilation=dilation, stride = stride),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
 
-    def forward(self, x):
-        return self.conv(x)
-    
-class ConvTransposeBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size = 3, dilation=1, stride = 1, output_padding = 0):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size= kernel_size, padding = dilation, dilation=dilation, stride = stride, output_padding=output_padding),
-            nn.BatchNorm2d(out_channels),
-            nn.Dropout2d(p=0.2),
-            nn.ReLU(inplace=True),
-        )
+        self.sample_size = sample_size
+        time_embed_dim = None # my change
 
-    def forward(self, x):
-        return self.conv(x)
+        self.center_input_sample = center_input_sample
+
+        # Check inputs
+        if len(down_block_types) != len(up_block_types):
+            raise ValueError(
+                f"Must provide the same number of `down_block_types` as `up_block_types`. `down_block_types`: {down_block_types}. `up_block_types`: {up_block_types}."
+            )
+
+        if len(block_out_channels) != len(down_block_types):
+            raise ValueError(
+                f"Must provide the same number of `block_out_channels` as `down_block_types`. `block_out_channels`: {block_out_channels}. `down_block_types`: {down_block_types}."
+            )
+
+        # input
+        self.conv_in = nn.Conv2d(in_channels, block_out_channels[0], kernel_size=3, padding=(1, 1))
+ 
+        self.class_embedding = None
+
+        self.down_blocks = nn.ModuleList([])
+        self.mid_block = None
+        self.up_blocks = nn.ModuleList([])
+
+        # down
+        output_channel = block_out_channels[0]
+        for i, down_block_type in enumerate(down_block_types):
+            input_channel = output_channel
+            output_channel = block_out_channels[i]
+            is_final_block = i == len(block_out_channels) - 1
+
+            down_block = get_down_block(
+                down_block_type,
+                num_layers=layers_per_block,
+                in_channels=input_channel,
+                out_channels=output_channel,
+                temb_channels=time_embed_dim,
+                add_downsample=not is_final_block,
+                resnet_eps=norm_eps,
+                resnet_act_fn=act_fn,
+                resnet_groups=norm_num_groups,
+                attention_head_dim=attention_head_dim if attention_head_dim is not None else output_channel,
+                downsample_padding=downsample_padding,
+                resnet_time_scale_shift=resnet_time_scale_shift,
+                downsample_type=downsample_type,
+                dropout=dropout,
+            )
+            self.down_blocks.append(down_block)
+
+        # mid
+        if mid_block_type is None:
+            self.mid_block = None
+        else:
+            self.mid_block = UNetMidBlock2D(
+                in_channels=block_out_channels[-1],
+                temb_channels=time_embed_dim,
+                dropout=dropout,
+                resnet_eps=norm_eps,
+                resnet_act_fn=act_fn,
+                output_scale_factor=mid_block_scale_factor,
+                resnet_time_scale_shift=resnet_time_scale_shift,
+                attention_head_dim=attention_head_dim if attention_head_dim is not None else block_out_channels[-1],
+                resnet_groups=norm_num_groups,
+                attn_groups=attn_norm_num_groups,
+                add_attention=add_attention,
+            )
+
+        # up
+        reversed_block_out_channels = list(reversed(block_out_channels))
+        output_channel = reversed_block_out_channels[0]
+        for i, up_block_type in enumerate(up_block_types):
+            prev_output_channel = output_channel
+            output_channel = reversed_block_out_channels[i]
+            input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
+
+            is_final_block = i == len(block_out_channels) - 1
+
+            up_block = get_up_block(
+                up_block_type,
+                num_layers=layers_per_block + 1,
+                in_channels=input_channel,
+                out_channels=output_channel,
+                prev_output_channel=prev_output_channel,
+                temb_channels=time_embed_dim,
+                add_upsample=not is_final_block,
+                resnet_eps=norm_eps,
+                resnet_act_fn=act_fn,
+                resnet_groups=norm_num_groups,
+                attention_head_dim=attention_head_dim if attention_head_dim is not None else output_channel,
+                resnet_time_scale_shift=resnet_time_scale_shift,
+                upsample_type=upsample_type,
+                dropout=dropout,
+            )
+            self.up_blocks.append(up_block)
+
+        # out
+        num_groups_out = norm_num_groups if norm_num_groups is not None else min(block_out_channels[0] // 4, 32)
+        self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=num_groups_out, eps=norm_eps)
+        self.conv_act = nn.SiLU()
+        self.conv_out = nn.Conv2d(block_out_channels[0], out_channels, kernel_size=3, padding=1)
 
 
-class UNetV2(pl.LightningModule):
-    """
-    UNet with dilated convolutions, nonzero stride to reduce spatial dimensions, 
-    and only transpoed convolutions for decoder layers.
-    """
+
+    def forward(self, sample):
+        """
+        Overrride the original HuggingFace forward function to remove timestemp.
+        Code modified from implementation in diffusers library: https://github.com/huggingface/diffusers/blob/v0.33.1/src/diffusers/models/unets/unet_2d.py#L157
+        """
+        # 0. center input if necessary
+        if self.center_input_sample:
+            sample = 2 * sample - 1.0
+
+        # 1. time (skipping)
+
+        # 2. pre-process
+        skip_sample = sample
+        sample = self.conv_in(sample)
+
+        # 3. down
+        down_block_res_samples = (sample,)
+        for downsample_block in self.down_blocks:
+            if hasattr(downsample_block, "skip_conv"):
+                sample, res_samples, skip_sample = downsample_block(
+                    hidden_states=sample, temb=None, skip_sample=skip_sample # temb is None because we are not using time embeddings/diffusion training
+                )
+            else:
+                sample, res_samples = downsample_block(hidden_states=sample, temb=None)
+
+            down_block_res_samples += res_samples
+
+        # 4. mid
+        if self.mid_block is not None:
+            sample = self.mid_block(sample, None)
+
+        # 5. up
+        skip_sample = None
+        for upsample_block in self.up_blocks:
+            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+
+            if hasattr(upsample_block, "skip_conv"):
+                sample, skip_sample = upsample_block(sample, res_samples, None, skip_sample)
+            else:
+                sample = upsample_block(sample, res_samples, None)
+
+        # 6. post-process
+        sample = self.conv_norm_out(sample)
+        sample = self.conv_act(sample)
+        sample = self.conv_out(sample)
+
+        if skip_sample is not None:
+            sample += skip_sample
+
+        return sample
+
+
+
+class Hugging(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
-        self.name = "UNetV2"
+        self.name = "HuggingFace"
 
         self.learning_rate = cfg.unet.learning_rate
         self.plot_every_n_steps = cfg.plot_every_n_steps
@@ -76,51 +230,32 @@ class UNetV2(pl.LightningModule):
                                           cfg.sample_rate, 
                                           cfg.Encoding.softargmax_beta)
 
-        self.init()
-
-    def init(self, in_channels=2, out_channels=2, base_c=64):
-        # Encoder with increasing dilation
-        self.enc1 = ConvBlock(in_channels, base_c, dilation=1, stride = 2)
-        self.enc2 = ConvBlock(base_c, base_c*2, dilation=2, stride = 2)
-        self.enc3 = ConvBlock(base_c*2, base_c*4, dilation=4, stride = 2)
-        self.enc4 = ConvBlock(base_c*4, base_c*8, dilation=8, stride = 2)
-        self.enc5 = ConvBlock(base_c*8, base_c*8, dilation=8, stride = 2)
-
-        # Decoder
-        self.up1 = ConvTransposeBlock(base_c*8, base_c*8, stride=2, output_padding=1)
-        self.up2 = ConvTransposeBlock(base_c*16, base_c*4, stride=2, output_padding=1)
-        self.up3 = ConvTransposeBlock(base_c*8, base_c*2, stride=2, output_padding=1)
-        self.up4 = ConvTransposeBlock(base_c*4, base_c, stride=2, output_padding=1)
-        self.up5 = ConvTransposeBlock(base_c*2, out_channels, stride=2, output_padding=1)
-
-        self.final_conv = nn.Conv2d(out_channels, out_channels, kernel_size=1)
-        self.tanh = nn.Tanh()
-
+        self.model = HuggingChild(
+            sample_size=(1536, 32),  # the target image resolution
+            in_channels=2,  # the number of input channels, 3 for RGB images
+            out_channels=2,  # the number of output channels
+            layers_per_block=2,  # how many ResNet layers to use per UNet block
+            block_out_channels=(128, 128, 256, 256, 512, 512),  # the number of output channels for each UNet block
+            down_block_types=(
+                "DownBlock2D",  # a regular ResNet downsampling block
+                "DownBlock2D",
+                "DownBlock2D",
+                "DownBlock2D",
+                "AttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
+                "DownBlock2D",
+            ),
+            up_block_types=(
+                "UpBlock2D",  # a regular ResNet upsampling block
+                "AttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
+                "UpBlock2D",
+                "UpBlock2D",
+                "UpBlock2D",
+                "UpBlock2D",
+            ),
+        )
 
     def forward(self, x):
-        # Encoder
-        x1 = self.enc1(x)
-        x2 = self.enc2(x1)
-        x3 = self.enc3(x2)
-        x4 = self.enc4(x3)
-        x5 = self.enc5(x4)
-
-        # Decoder
-        x = self.up1(x5)
-        x = torch.cat((x, x4), dim=1)
-        x = self.up2(x)
-        x = torch.cat((x, x3), dim=1)
-        x = self.up3(x)
-        x = torch.cat((x, x2), dim=1)
-        x = self.up4(x)
-        x = torch.cat((x, x1), dim=1)
-        x = self.up5(x)
-       
-        # Final convolution
-        x = self.final_conv(x)
-        x = self.tanh(x)
-
-        return x
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         loss_type = "train"
