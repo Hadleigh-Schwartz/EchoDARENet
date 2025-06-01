@@ -13,7 +13,10 @@ The speech and RIR datasets used to train/validate the model is selected in the 
 - RIR:
   - MIT IR Survey - 32 kHz RIRs from real environments
   - HOMULA RIR - 48kHz RIRs from real environments 
-  - Simulated IR - Genreated at any sampling rate using generate_ir.py
+  - SoundCam
+  - EARS
+  - Simulated IR - Generated at any sampling rate using generate_ir.py
+  
 
 ### Downloads/Generation
 - The [LibriSpeech](https://www.openslr.org/12) dataset and the [MIT RIR Survey](https://mcdermottlab.mit.edu/Reverb/IR_Survey.html) dataset are  automatically downloaded and be prepared the first time the models are trained, validated or tested on these datasets.
@@ -38,6 +41,10 @@ The speech and RIR datasets used to train/validate the model is selected in the 
     │   ├── <hom_ir_name>.wav
     │   ├── ....
   ```
+
+- Download the preprocessed subsets of the SoundCam dataset [here](https://purl.stanford.edu/xq364hd5023). Unzip and place each subset of data (each of which is a subfolder upon unzipping) into one parent directory and then run the dataset/unpack_soundcam.py script to re-organize them into .wav files in a flat directory structure.
+
+- Download the EARS RIRs using the official download script [here](https://github.com/sp-uhh/ears_benchmark/blob/main/download_ears_reverb.sh). Comment out the lines in this script corresponding to download of the speech dataset if you only want the RIRs.
 
 - Generate random simulated IRs using generate_ir.py and place the resulting folder in Datasets. The expected file structure is:
    ```

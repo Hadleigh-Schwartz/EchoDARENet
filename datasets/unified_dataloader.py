@@ -30,6 +30,9 @@ class ConcatRIRDataset(ConcatDataset):
         self.samplerate = datasets[0].samplerate
   
 class SPDataset(Dataset):
+    """
+    StegaPhone model dataset class.
+    """
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
       
         self.type = type
@@ -37,10 +40,16 @@ class SPDataset(Dataset):
         self.device = device
 
         self.config = config        
+        if type == "train":
+            dataset_list = config.train_rir_datasets
+        elif type == "val":
+            dataset_list = config.val_rir_datasets
+        elif type == "test":
+            dataset_list = config.test_rir_datasets
 
         # load the RIR dataset
         rir_datasets = []
-        for dataset in config.rir_datasets:
+        for dataset in dataset_list:
             if dataset == "sim":
                 rir_datasets.append(SimIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "homula":
@@ -49,7 +58,7 @@ class SPDataset(Dataset):
                 rir_datasets.append(MitIrSurveyDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "GTU":
                 rir_datasets.append(GTUIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
-            elif dataset == "soundcam":
+            elif dataset == "SoundCam":
                 rir_datasets.append(SoundCamIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
             elif dataset == "EARS":
                 rir_datasets.append(EARSIRDataset(config, type=self.type, split_train_val_test_p = self.split_train_val_test_p, device=device))
@@ -82,6 +91,9 @@ class SPDataset(Dataset):
             else:
                 raise ValueError(f"Selected speech dataset {dataset} is not valid")
         self.speech_dataset = ConcatDataset(speech_datasets)
+
+        print(f"Number of RIRs in {self.type} set: {len(self.rir_dataset)}")
+        print(f"Number of speech samples in {self.type} set: {len(self.speech_dataset)}")
 
         # get the length of the dataset
         if type == "train":

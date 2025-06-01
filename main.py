@@ -36,7 +36,7 @@ def create_log_name(cfg, log_dir):
     # abbreviations for the datasets
     rir_nicknames = {
         "GTU": "g",
-        "soundcam": "s",
+        "SoundCam": "s",
         "EARS": "e",
         "MIT": "m",
         "homula": "h",
@@ -50,11 +50,24 @@ def create_log_name(cfg, log_dir):
 
     # create the version string
     version = ""
-    for rir in cfg.rir_datasets:
+    for rir in cfg.train_rir_datasets:
         if rir in rir_nicknames:
             version += rir_nicknames[rir]
         else:
             raise ValueError(f"Unknown RIR dataset: {rir}")
+    version += "[train_rir]"
+    for rir in cfg.val_rir_datasets:
+        if rir in rir_nicknames:
+            version += rir_nicknames[rir]
+        else:
+            raise ValueError(f"Unknown RIR dataset: {rir}")
+    version += "[val_rir]"
+    for rir in cfg.test_rir_datasets:
+        if rir in rir_nicknames:
+            version += rir_nicknames[rir]
+        else:
+            raise ValueError(f"Unknown RIR dataset: {rir}")
+    
     version += "_"
     for speech in cfg.speech_datasets:
         if speech in speech_nicknames:
@@ -63,6 +76,8 @@ def create_log_name(cfg, log_dir):
             version += "p"
         else:
             raise ValueError(f"Unknown speech dataset: {speech}")
+    version += "[speech]"
+
     version += f"_{cfg.min_early_reverb}"
     version += f"_{cfg.align_ir}"
     
@@ -112,6 +127,13 @@ def main(args):
         dirpath = tensorboard.log_dir
     )
 
+    # Copy the config file to the log directory for future reference. 
+    # Have to premptively create the directory, as otheriwse it's not created until fitting begins
+    os.makedirs(tensorboard.log_dir, exist_ok=True)
+    os.system(f"cp {args.config_path} {tensorboard.log_dir}/config.yaml") # copy config to log dir for reference
+    print(f"Configuration file copied to {tensorboard.log_dir}/config.yaml")
+
+
     # Initialize Lightning Trainer
     trainer = pl.Trainer(
         gradient_clip_val = cfg.fins.gradient_clip_value,
@@ -120,10 +142,6 @@ def main(args):
         # strategy = DDPStrategy(process_group_backend="gloo"), # use this for distributed training
         **cfg['Trainer']
     )
-
-    # Copy the config file to the log directory for future reference. 
-    # Must be done at this point because logdir is created during Trainer init.
-    os.system(f"cp {args.config_path} {tensorboard.log_dir}/config.yaml") # copy config to log dir for reference
 
     # Start training
     trainer.fit(

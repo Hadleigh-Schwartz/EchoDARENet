@@ -17,7 +17,7 @@ class EARSSpeechDataset(Dataset):
         
         speakers = {
             "train": [s for s in all_speakers if s not in valid_speakers + test_speakers],
-            "valid": valid_speakers, 
+            "val": valid_speakers, 
             "test": test_speakers
         }
 

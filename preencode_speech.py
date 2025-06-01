@@ -12,6 +12,7 @@ import pandas as pd
 
 from datasets.librispeech_data import LibriSpeechDataset
 from datasets.hifi_speech_data import HiFiSpeechDataset
+from datasets.ears_speech_data import EARSSpeechDataset
 from utils.utils import load_config
 
 # append echo encoding parent dir to path
@@ -41,9 +42,8 @@ def main(args):
     reverb_speech_duration = nwins * win_size
 
     # make the data directory if it does not exist
-    data_dir = Path(os.path.expanduser(cfg.datasets_path), cfg.preencoded_speech_path)
+    data_dir = Path(os.path.expanduser(cfg.datasets_path), args.output_path)
     data_dir = str(data_dir)
-
 
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
@@ -59,13 +59,17 @@ def main(args):
             os.makedirs(os.path.join(data_dir, split))
         meta = {}
         
-        if cfg.speech_dataset == "HiFi":
+        if cfg.base_speech_dataset == "HiFi":
             speech_dataset = HiFiSpeechDataset(cfg, type=split)
-        elif cfg.speech_dataset == "LibriSpeech":
+        elif cfg.base_speech_dataset == "LibriSpeech":
             speech_dataset = LibriSpeechDataset(cfg, type=split)
+        elif cfg.base_speech_dataset == "EARS":
+            speech_dataset = EARSSpeechDataset(cfg, type=split)
         else:
-            raise ValueError(f"Selected speech dataset {cfg.speech_dataset} is not valid")
+            raise ValueError(f"Selected speech dataset {cfg.base_speech_dataset} is not valid")
         
+        print(f"Total files in {split} split: {len(speech_dataset)}")
+
         if args.max_files is None:
             max_files = len(speech_dataset)
         else:
@@ -77,10 +81,13 @@ def main(args):
             if os.path.exists(os.path.join(data_dir, split, f"enc_{num_files_written}.wav")):
                 num_files_written += 1
                 continue
-
+            
+            # check if we have reached the maximum number of files
             if num_files_written >= max_files:
                 break
-            if cfg.speech_dataset == "LibriSpeech":
+            
+
+            if cfg.base_speech_dataset == "LibriSpeech":
                 speech = data[0].flatten().numpy() # librispeech not flattened
             else:
                 speech = data[0]
@@ -135,5 +142,7 @@ if __name__ == "__main__":
     parser.add_argument("--no_silence", action="store_true",
                         help = "If set, the speech will be cropped to remove silence and only files with non-silent content of at least reverb_duration will be used." \
                         "If not set, the speech may be padded to the required length.")
+    parser.add_argument("--output_path", "-o", type=str, default=None, required=True,
+                        help = "Path to the output directory where the encoded speech files will be saved.")
     args = parser.parse_args()
     main(args)

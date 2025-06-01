@@ -1,8 +1,10 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
 datasets_path: /media/storage/hadleigh/reverb_speech_data/
-base_speech_dataset: "HiFi" # options: "LibriSpeech", "HiFi", "EARS"
-rir_datasets: ["MIT", "homula", "EARS", "soundcam"] # options: homula, MIT, sim, soundcam, GTU, EARS
-speech_datasets: ["preencoded_test5"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
+base_speech_dataset: "EARS" # options: "LibriSpeech", "HiFi", "EARS". Determines where preencoding draws from
+train_rir_datasets: ["EARS"] # options: homula, MIT, sim, soundcam, GTU, EARS
+val_rir_datasets: ["SoundCam", "GTU"] 
+test_rir_datasets: [] 
+speech_datasets: ["preencoded_ears"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
 random_seed: 42
 nwins: 32 # the model input size = nwins * win_size. Note: original FINS uses 131072 samples of input at 48 kHz
 min_early_reverb: 0.0  # minimum permitted early reverb time for considered RIRs(seconds). The early reverb is taken to be the time where the RIR is at its maximum value.
@@ -18,7 +20,7 @@ Encoding: # echo encoding params
   kernel: "bp"
   decoding: "cepstrum" # options: "autocepstrum", "cepstrum"
   cutoff_freq: 1000
-  hanning_factor: 4
+  hanning_factor: 2
   softargmax_beta : 10000000 # decoding
 
 fins:
@@ -44,7 +46,7 @@ fins:
 unet:
   learning_rate: 0.0001 
   use_transformer: True
-  alphas: [2000, 0.5, 10, 0] # cepstrum MSE loss weight, symbol error rate weight, full cepstrum MES loss weight, average error reduction loss weight
+  alphas: [2000, 0.5, 0, 0] # cepstrum MSE loss weight, symbol error rate weight, full cepstrum MES loss weight, average error reduction loss weight
   residual: True
   norm_cepstra: False
   cep_target_region: [40, 125] # start and end (samples) of region of the cepstrum to consider in computing the cepstrum loss # NOTE: Should be related to delays below

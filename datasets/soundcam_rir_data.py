@@ -12,29 +12,34 @@ class SoundCamIRDataset(Dataset):
     be redundant. Instead, we randomly select one configuration (a human identity and position) per room, but do use all 10 microphones,
     as mic (and its associated different position within the room) has a bigger impact on IR.
     """
-    def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
+    def __init__(self, config, type="train", split_train_val_test_p=[50, 25, 25], device='cuda'):
         self.config = config
         self.root_dir = Path(os.path.expanduser(self.config['datasets_path']), 'SoundCamFlat')
         self.type = type
   
-        self.samplerate = 48000 # hardcoded because data is saved as .npy files, which don't have a samplerate specified
+        self.samplerate = 48000 # hardcoded (based on paper) because data is saved as .npy files, which don't have a samplerate specified
 
-        # get all rooms and randomly assign them to train, val, test, ensuring no room is shared between splits
-        # (would potentially cause leakage if it occurred)
         room_folders = glob.glob(f"{self.root_dir}/*")
-        self.splittrain_val_test_p = np.array(np.int16(split_train_val_test_p))
-        self.splittrain_val_test_p = self.splittrain_val_test_p / np.sum(self.splittrain_val_test_p) * 100
-        self.splittrain_val_test_p = np.int16(np.round(self.splittrain_val_test_p))
-        self.split_edge = np.cumsum(np.concatenate(([0],self.splittrain_val_test_p)), axis=0)
-        self.idx_rand = np.random.RandomState(seed=config['random_seed']).permutation(len(room_folders))
-
-        if self.type == "train":
-            split_room_idxs = self.idx_rand[self.split_edge[0]:self.split_edge[1]]
-        elif self.type == "val":
-            split_room_idxs = self.idx_rand[self.split_edge[1]:self.split_edge[2]]
-        elif self.type == "test":
-            split_room_idxs = self.idx_rand[self.split_edge[2]:self.split_edge[3]]
-    
+        if type == "train" and "SoundCam" not in config.val_rir_datasets and "SoundCam" not in config.test_rir_datasets:
+            # all rooms can be used for training, no need to split
+            split_room_idxs = [0, 1, 2, 3]
+        elif type == "val" and "SoundCam" not in config.train_rir_datasets and "SoundCam" not in config.test_rir_datasets:
+            # all rooms can be used for validation, no need to split
+            split_room_idxs = [0, 1, 2, 3]
+        elif type == "test" and "SoundCam" not in config.train_rir_datasets and "SoundCam" not in config.val_rir_datasets:
+            # all rooms can be used for testing, no need to split
+            split_room_idxs = [0, 1, 2, 3]
+        else:
+            # get all rooms and randomly assign them to train, val, test, ensuring no room is shared between splits
+            # (would potentially cause leakage if it occurred)
+            if self.type == "train":
+                split_room_idxs = [0, 1]
+            elif self.type == "val":
+                split_room_idxs = [2]
+            elif self.type == "test":
+                split_room_idxs = [3]
+            print(len(split_room_idxs), "rooms in split")
+        
         # for each room, randomly choose a human folder, corresponding to a specific person within the room
         # then, within that human folder, randomly choose a configuration, corresponding to the human's position within it
         self.split_filenames_and_mics = []

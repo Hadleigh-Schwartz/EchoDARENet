@@ -290,7 +290,7 @@ class DareDataset(Dataset):
             hop_length=self.nhop,
             win_length=self.nfft,
             window='hann'
-            )
+        )
 
         if self.stft_format == 'magphase':
             np.seterr(divide = 'ignore')

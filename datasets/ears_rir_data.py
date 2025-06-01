@@ -12,6 +12,8 @@ import os
 import sofa
 import mat73
 
+
+
 class EARSIRDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
         self.config = config
@@ -25,38 +27,65 @@ class EARSIRDataset(Dataset):
             "test": [],
         }
 
+        # divide dataset into train, val, test splits
+        if type == "train" and "EARS" not in config.val_rir_datasets and "EARS" not in config.test_rir_datasets:
+            self.dataset_splits = {
+                "train" : ["ACE-Challenge", "AIR", "ARNI", "BRUDEX", "dEchorate", "DetmoldSRIR", "Palimpsest"],
+                "val" : [], 
+                "test" : []
+            }
+        elif type == "val" and "EARS" not in config.train_rir_datasets and "EARS" not in config.test_rir_datasets:
+            self.dataset_splits = {
+                "train" : [],
+                "val" : ["ACE-Challenge", "AIR", "ARNI", "BRUDEX", "dEchorate", "DetmoldSRIR", "Palimpsest"],
+                "test" : [] 
+            }
+        elif type == "test" and "EARS" not in config.train_rir_datasets and "EARS" not in config.val_rir_datasets:
+            self.dataset_splits = {
+                "train" : [],
+                "val" : [],
+                "test" : ["ACE-Challenge", "AIR", "ARNI", "BRUDEX", "dEchorate", "DetmoldSRIR", "Palimpsest"]
+            }
+        else:
+            self.dataset_splits = {
+                "train" : ["ARNI", "BRUDEX", "dEchorate", "DetmoldSRIR", "Palimpsest"],
+                "val" : ["ACE-Challenge"],
+                "test" : ["AIR"]
+            }
+
+
         # ACE-Challenge dataset
         dir = os.path.join(self.root_dir, "ACE-Challenge")
         names = ["Chromebook", "Crucif", "EM32", "Lin8Ch", "Mobile", "Single"]
         for name in names:
-            rir_files["test"] += sorted(glob.glob(os.path.join(dir, name, "**", "*RIR.wav"), recursive=True))
+            rir_files[self.dataset_to_split("ACE-Challenge")] += sorted(glob.glob(os.path.join(dir, name, "**", "*RIR.wav"), recursive=True))
 
         # AIR dataset
         dir = os.path.join(self.root_dir, "AIR", "AIR_1_4", "AIR_wav_files")
-        rir_files["val"] += sorted(glob.glob(os.path.join(dir, "*.wav")))
+        rir_files[self.dataset_to_split("AIR")] += sorted(glob.glob(os.path.join(dir, "*.wav")))
 
         # ARNI dataset
         dir = os.path.join(self.root_dir, "ARNI")
         all_arni_files = sorted(glob.glob(os.path.join(dir, "**", "*.wav"), recursive=True))
         # remove file numClosed_26-35/IR_numClosed_28_numComb_2743_mic_4_sweep_5.wav because it is corrupted
         all_arni_files = [file for file in all_arni_files if "numClosed_26-35/IR_numClosed_28_numComb_2743_mic_4_sweep_5.wav" not in file]
-        rir_files["train"] += sorted(list(np.random.choice(all_arni_files, size=1000, replace=False))) # take 1000 of 132037 RIRs
+        rir_files[self.dataset_to_split("ARNI")] += sorted(list(np.random.choice(all_arni_files, size=1000, replace=False))) # take 1000 of 132037 RIRs
 
         # BRUDEX dataset
         dir = os.path.join(self.root_dir, "BRUDEX")
-        rir_files["train"] += sorted(glob.glob(os.path.join(dir, "rir", "**", "*.mat"), recursive=True))
+        rir_files[self.dataset_to_split("BRUDEX")] += sorted(glob.glob(os.path.join(dir, "rir", "**", "*.mat"), recursive=True))
 
         # dEchorate dataset
         dir = os.path.join(self.root_dir, "dEchorate", "sofa")
-        rir_files["train"] += sorted(glob.glob(os.path.join(dir, "**", "*.sofa"), recursive=True))
+        rir_files[self.dataset_to_split("dEchorate")] += sorted(glob.glob(os.path.join(dir, "**", "*.sofa"), recursive=True))
 
         # DetmoldSRIR dataset
         dir = os.path.join(self.root_dir, "DetmoldSRIR")
-        rir_files["train"] += sorted(glob.glob(os.path.join(dir, "SetA_SingleSources", "Data", "**", "*.wav"), recursive=True))
+        rir_files[self.dataset_to_split("DetmoldSRIR")] += sorted(glob.glob(os.path.join(dir, "SetA_SingleSources", "Data", "**", "*.wav"), recursive=True))
 
         # Palimpsest dataset
         dir = os.path.join(self.root_dir, "Palimpsest")
-        rir_files["train"] += sorted(glob.glob(os.path.join(dir, "**", "*.wav"), recursive=True))
+        rir_files[self.dataset_to_split("Palimpsest")] += sorted(glob.glob(os.path.join(dir, "**", "*.wav"), recursive=True))
             
 
         self.split_filenames = rir_files[type]
@@ -67,6 +96,19 @@ class EARSIRDataset(Dataset):
 
         self.split_filenames = [f for f in self.split_filenames if f not in exclude_filenames]
         self.device = device
+
+
+    def dataset_to_split(self, dataset):
+        if dataset in self.dataset_splits["train"]:
+            return "train"
+        elif dataset in self.dataset_splits["val"]:
+            return "val"
+        elif dataset in self.dataset_splits["test"]:
+            return "test"
+        else:
+            raise ValueError(f"Dataset {dataset} not found in splits")
+
+       
 
     def read_ears_rir_file(self, rir_file):
         """
