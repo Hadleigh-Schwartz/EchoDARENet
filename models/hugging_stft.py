@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import Optional, Tuple, Union
 
-from decoding import CepstralDomainDecodingLoss
+from decoding import TimeDomainDecodingLoss
 
 from diffusers import UNet2DModel, ConfigMixin, ModelMixin
 from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
@@ -199,10 +199,10 @@ class HuggingChild(UNet2DModel):
 
 
 
-class Hugging(pl.LightningModule):
+class HuggingSTFT(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
-        self.name = "HuggingFace"
+        self.name = "HuggingFaceSTFT"
 
         self.learning_rate = cfg.unet.learning_rate
         self.plot_every_n_steps = cfg.plot_every_n_steps
@@ -219,19 +219,23 @@ class Hugging(pl.LightningModule):
         self.lr_scheduler_gamma = 0.9
         self.eps = 1e-16
 
+        self.nfft = cfg.stft_testing.nfft
+        self.nhop = cfg.stft_testing.nhop
+
         #initialize encoding parameters and decoding loss
         self.delays = cfg.Encoding.delays
         self.win_size = cfg.Encoding.win_size
         self.cutoff_freq = cfg.Encoding.cutoff_freq
         self.sample_rate = cfg.sample_rate
-        self.decoding_loss = CepstralDomainDecodingLoss(cfg.Encoding.delays, 
+        self.decoding_loss = TimeDomainDecodingLoss(cfg.Encoding.delays, 
                                           cfg.Encoding.win_size, 
+                                          cfg.Encoding.decoding,
                                           cfg.Encoding.cutoff_freq, 
                                           cfg.sample_rate, 
                                           cfg.Encoding.softargmax_beta)
 
         self.model = HuggingChild(
-            sample_size=(1536, 32),  # the target image resolution
+            sample_size=(4096, 32),  # the target image resolution
             in_channels=2,  # the number of input channels, 3 for RGB images
             out_channels=2,  # the number of output channels
             layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -261,63 +265,92 @@ class Hugging(pl.LightningModule):
         loss_type = "train"
         enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
-        enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float() # 2, 1536, 32  (channel, quefrency, num_windows)
-        enc_speech_cepstra = enc_speech_cepstra.float() # 2, 1536, 32 (channel, quefrency, num_windows)
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb,  enc_speech_stft, enc_reverb_speech_stft = batch
+             
+        enc_speech_stft = enc_speech_stft.float()
+        enc_reverb_speech_stft = enc_reverb_speech_stft.float()
 
-        enc_speech_cepstra_hat = self(enc_reverb_speech_cepstra) 
+        enc_speech_stft_hat = self(enc_reverb_speech_stft) 
+      
+        #mse loss on stfts
+        stft_loss = nn.functional.mse_loss(enc_speech_stft_hat, enc_speech_stft)
 
-        if batch_idx % self.plot_every_n_steps == 0:
-            plot = True
-        else:
-            plot = False
-
-
-        cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
-        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + full_cepstra_loss * self.alphas[2]  + self.alphas[3] * avg_err_reduction_loss 
+        # istft of enc_speech_stft_hat
+        enc_speech_stft_hat_c = enc_speech_stft_hat[:,0,:,:].float() + 1j*enc_speech_stft_hat[:,1,:,:].float()
+        enc_speech_hat_time = torch.istft(enc_speech_stft_hat_c,
+                                           n_fft=self.nfft,
+                                           hop_length=self.nhop,
+                                           win_length=self.nfft,
+                                           window=torch.hann_window(self.nfft).to(enc_speech_stft_hat.device))
+       
+  
+        if enc_speech_hat_time.shape[1] < enc_speech_wav.shape[2]:
+            padding = enc_speech_wav.shape[2] - enc_speech_hat_time.shape[1]
+            enc_speech_hat_time = F.pad(enc_speech_hat_time, (0, padding), "constant", 0)
+        # add channel dimension
+        enc_speech_hat_time = enc_speech_hat_time.unsqueeze(1)
+    
+        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_hat_time, symbols, num_errs_no_reverb, num_errs_reverb)
         
-        self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
+        loss = stft_loss * 0.5 + sym_err_rate * 0.5
+
+        self.log(loss_type+"_stft_loss", stft_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-        self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
       
-        if plot:
-            self.make_cepstra_plot(enc_reverb_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols)
-            # self.weight_histograms()
-            
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss_type = "val"
-
         enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
-        enc_reverb_speech_cepstra = enc_reverb_speech_cepstra.float()
-        enc_speech_cepstra = enc_speech_cepstra.float()
- 
-        enc_speech_cepstra_hat = self(enc_reverb_speech_cepstra) 
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb,  enc_speech_stft, enc_reverb_speech_stft = batch
+             
+        enc_speech_stft = enc_speech_stft.float()
+        enc_reverb_speech_stft = enc_reverb_speech_stft.float()
 
-        cepstra_loss, full_cepstra_loss = self.compute_speech_loss(enc_speech_cepstra, enc_speech_cepstra_hat ) 
-        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_cepstra_hat, symbols, num_errs_no_reverb, num_errs_reverb)
-        loss = self.alphas[0] * cepstra_loss + self.alphas[1] * sym_err_rate + full_cepstra_loss * self.alphas[2]  + self.alphas[3] * avg_err_reduction_loss 
+        print(f"enc_speech_stft shape: {enc_speech_stft.shape}")
+
+        enc_speech_stft_hat = self(enc_reverb_speech_stft) 
+        print(f"enc_speech_stft_hat shape: {enc_speech_stft_hat.shape}")
+
+        #mse loss on stfts
+        stft_loss = nn.functional.mse_loss(enc_speech_stft_hat, enc_speech_stft)
+
+        # istft of enc_speech_stft_hat
+        enc_speech_stft_hat_c = enc_speech_stft_hat[:,0,:,:].float() + 1j*enc_speech_stft_hat[:,1,:,:].float()
+        enc_speech_hat_time = torch.istft(enc_speech_stft_hat_c,
+                                           n_fft=self.nfft,
+                                           hop_length=self.nhop,
+                                           win_length=self.nfft,
+                                           window=torch.hann_window(self.nfft).to(enc_speech_stft_hat.device))
+        print(f"enc_speech_hat_time shape: {enc_speech_hat_time.shape}")
+        # pad enc_speech_hat_time to the same length as the original speech
+        print(enc_speech_wav.shape)
+        if enc_speech_hat_time.shape[1] < enc_speech_wav.shape[2]:
+            padding = enc_speech_wav.shape[2] - enc_speech_hat_time.shape[1]
+            enc_speech_hat_time = F.pad(enc_speech_hat_time, (0, padding), "constant", 0)
+        # add channel dimension
+        enc_speech_hat_time = enc_speech_hat_time.unsqueeze(1)
+        print(f"enc_speech_hat_time shape after padding and unsqueeze: {enc_speech_hat_time.shape}")
+
+        sym_err_rate, avg_err_reduction_loss, no_reverb_sym_err_rate, reverb_sym_err_rate  = self.decoding_loss(enc_speech_hat_time, symbols, num_errs_no_reverb, num_errs_reverb)
         
-        self.log(loss_type+"_cep_mse_loss", cepstra_loss, sync_dist = True )
+        loss = stft_loss * 0.5 + sym_err_rate * 0.5
+
+        self.log(loss_type+"_stft_loss", stft_loss, sync_dist = True )
         self.log(loss_type+"_sym_err_rate", sym_err_rate, sync_dist = True )
-        self.log(loss_type+"_full_cep_mse_loss", full_cepstra_loss, sync_dist = True )
         self.log(loss_type+"_avg_err_reduction_loss", avg_err_reduction_loss, sync_dist = True )
         self.log(loss_type+"_no_reverb_sym_err_rate", no_reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_reverb_sym_err_rate", reverb_sym_err_rate, sync_dist = True )
         self.log(loss_type+"_loss", loss, sync_dist = True )
       
-        self.make_cepstra_plot(enc_reverb_speech_cepstra, enc_speech_cepstra, enc_speech_cepstra_hat, symbols)
-
         return loss
 
+        
     def test_step(self, batch, batch_idx):
         loss_type = "test"
         # TODO

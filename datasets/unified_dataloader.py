@@ -325,6 +325,47 @@ class SPDataset(Dataset):
             symbols = symbols[start_win:start_win + self.reverb_speech_duration // self.win_size]
             # print(len(enc_speech), len(enc_reverb_speech), len(unenc_reverb_speech), len(symbols))
 
+            # get STFTs of encoded reverberant speech and encoded clean speech
+            enc_speech_torch = torch.tensor(enc_speech, dtype=torch.float32)
+            enc_speech_stft = torch.stft(
+                enc_speech_torch,
+                n_fft = self.config.stft_testing.nfft,
+                hop_length = self.config.stft_testing.nhop,
+                win_length = self.config.stft_testing.nfft,
+                window = torch.hann_window(self.config.stft_testing.nfft, periodic=True),
+                return_complex=True
+            )
+            enc_speech_stft = enc_speech_stft.numpy()
+            enc_speech_stft = np.stack((np.real(enc_speech_stft), np.imag(enc_speech_stft)))
+                                       
+            enc_reverb_speech_torch = torch.tensor(enc_reverb_speech, dtype=torch.float32)
+            enc_reverb_speech_stft = torch.stft(
+                enc_reverb_speech_torch,
+                n_fft = self.config.stft_testing.nfft,
+                hop_length = self.config.stft_testing.nhop,
+                win_length = self.config.stft_testing.nfft,
+                window = torch.hann_window(self.config.stft_testing.nfft, periodic=True),
+                return_complex=True
+            )
+            enc_reverb_speech_stft = enc_reverb_speech_stft.numpy()
+            enc_reverb_speech_stft = np.stack((np.real(enc_reverb_speech_stft), np.imag(enc_reverb_speech_stft)))
+            # enc_speech_stft = librosa.stft(
+            #     enc_speech,
+            #     n_fft = self.config.stft_testing.nfft,
+            #     hop_length = self.config.stft_testing.nhop,
+            #     win_length = self.config.stft_testing.nfft,
+            #     window = 'hann',
+            #     center = True
+            # )
+            # enc_reverb_speech_stft = librosa.stft(
+            #     enc_reverb_speech
+            #     n_fft = self.config.stft_testing.nfft,
+            #     hop_length = self.config.stft_testing.nhop,
+            #     win_length = self.config.stft_testing.nfft,
+            #     window = 'hann',
+            #     center = True
+            # )
+           
             # get cepstrum windows of speech (encoded, unencoded, reverberated and whatnot)
             enc_speech_cepstra = self.get_cepstrum_windows(enc_speech)
             enc_speech_cepstra = np.dstack(enc_speech_cepstra)
@@ -419,17 +460,17 @@ class SPDataset(Dataset):
             if self.data_in_ram:
                 self.data.append((enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
                                     enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
-                                    rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb))
+                                    rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb, enc_speech_stft, enc_reverb_speech_stft))
                 self.idx_to_data[idx] = len(self.data) - 1
             
         else:
             enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, 
             enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav,
-            rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb = self.data[self.idx_to_data[idx]]
+            rir, stochastic_noise, noise_condition, symbols, idx_rir, num_errs_no_reverb, num_errs_reverb,  enc_speech_stft, enc_reverb_speech_stft = self.data[self.idx_to_data[idx]]
         
         return enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
                 enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb
+                rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb,  enc_speech_stft, enc_reverb_speech_stft
 
 
 def batch_sampler(config, type="train"):

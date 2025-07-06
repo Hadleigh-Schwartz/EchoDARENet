@@ -5,9 +5,9 @@ and that batch elements look as expected.
 """
 
 from argparse import ArgumentParser
-from fins_lightning_dataloader import DareDataModule
 from datasets.gtu_rir_data import GTUIRDataset
 from datasets.soundcam_rir_data import SoundCamIRDataset
+from datasets.ace_rir_data import ACEIRDataset
 from datasets.ears_speech_data import EARSSpeechDataset
 from datasets.ears_rir_data import EARSIRDataset
 
@@ -28,19 +28,11 @@ def main(args):
     np.random.seed(cfg.random_seed)
     t.manual_seed(cfg.random_seed)
 
-    # Example testing Data Module
-    # datamodule = DareDataModule(config=cfg)
-    # # iterate over the dataloader
-    # for batch in datamodule.train_dataloader():
-    #     enc_speech_cepstra, enc_reverb_speech_cepstra, unenc_reverb_speech_cepstra, \
-    #             enc_speech_wav, enc_reverb_speech_wav, unenc_reverb_speech_wav, \
-    #             rir, stochastic_noise, noise_condition, symbols,  idx_rir, num_errs_no_reverb, num_errs_reverb = batch
-    #     print(rir.shape)
-
     # Example testing an IR dataset
     # dataset = GTUIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     # dataset = SoundCamIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
-    dataset = EARSIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    # dataset = EARSIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = ACEIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     # iterate over the dataset
     for i in range(len(dataset)):
         rir_data, file_id = dataset[i]

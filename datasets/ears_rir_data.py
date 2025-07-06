@@ -1,6 +1,5 @@
 """
 Code adapted from original EARS dataset code provided at https://github.com/sp-uhh/ears_benchmark/tree/main
-Note: Split ratios will be ignored as the dataset is already split into train, val, test
 """
 
 from torch.utils.data import Dataset, DataLoader
@@ -15,12 +14,12 @@ import mat73
 
 
 class EARSIRDataset(Dataset):
-    def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda'):
+    def __init__(self, config, type="train", split_train_val_test_p=[80, 10, 10], device='cuda'):
         self.config = config
         self.root_dir = os.path.join(os.path.expanduser(self.config['datasets_path']), 'ears_rirs')
         self.type = type
         
-        # Splits for RIRs, defined by EARS here https://github.com/sp-uhh/ears_benchmark/blob/main/generate_ears_reverb.py#L119
+        # Splits for RIRs. Original EARS splits here https://github.com/sp-uhh/ears_benchmark/blob/main/generate_ears_reverb.py#L119
         rir_files = {
             "train": [],
             "val": [],

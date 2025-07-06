@@ -9,6 +9,7 @@ from models.unet_v1 import UNetV1
 from models.unet_v2 import UNetV2
 from models.unet_v3 import UNetV3
 from models.hugging_face import Hugging
+from models.hugging_stft import HuggingSTFT
 from utils.utils import load_config
 
 import random
@@ -112,6 +113,9 @@ def main(args):
         model = JointModel(cfg)
     elif args.model == "hugging":
         model = Hugging(cfg)
+    elif args.model == "hugging_stft":
+        model = HuggingSTFT(cfg)
+
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
