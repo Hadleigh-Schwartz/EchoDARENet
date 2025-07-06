@@ -1,8 +1,8 @@
 sample_rate: 44100 # note: any loaded IR and speech data will be resampled to this rate
 datasets_path: /media/storage/hadleigh/reverb_speech_data/
 base_speech_dataset: "EARS" # options: "LibriSpeech", "HiFi", "EARS". Determines where preencoding draws from
-train_rir_datasets: ["EARS", "ACE"] # options: homula, MIT, sim, soundcam, GTU, EARS
-val_rir_datasets: ["SoundCam", "GTU", "ACE"] 
+train_rir_datasets: ["EARS", "ACE", "AIR", "MIT", "detmold", 'palimpsest'] # options: homula, MIT, sim, soundcam, GTU, EARS
+val_rir_datasets: ["SoundCam", "GTU", "ACE", "AIR", "BRUDEX", 'dechorate', 'detmold', 'palimpsest'] 
 test_rir_datasets: [] 
 speech_datasets: ["preencoded_ears"] # relative to datasets_path. If the name of directory in datasets_path, will be treated as a dataset path
 random_seed: 42

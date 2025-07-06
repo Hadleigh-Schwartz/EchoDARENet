@@ -44,7 +44,7 @@ The speech and RIR datasets used to train/validate the model is selected in the 
 
 - Download the preprocessed subsets of the SoundCam dataset [here](https://purl.stanford.edu/xq364hd5023). Unzip and place each subset of data (each of which is a subfolder upon unzipping) into one parent directory and then run the dataset/unpack_soundcam.py script to re-organize them into .wav files in a flat directory structure.
 
-- Download the EARS RIRs using the official download script [here](https://github.com/sp-uhh/ears_benchmark/blob/main/download_ears_reverb.sh). Comment out the lines in this script corresponding to download of the speech dataset if you only want the RIRs.
+- Download the EARS RIRs using the official download script [here](https://github.com/sp-uhh/ears_benchmark/blob/main/download_ears_reverb.sh). Comment out the lines in this script corresponding to download of the speech dataset if you only want the RIRs. Note that the dEchorate dataset did not download correctly with the provided EARS script, which may necessitate directly downloading it from the author-provided site [here](https://github.com/Chutlhu/dEchorate?tab=readme-ov-file)
 
 - Generate random simulated IRs using generate_ir.py and place the resulting folder in Datasets. The expected file structure is:
    ```

@@ -9,34 +9,52 @@ import zipfile
 from tqdm import tqdm
 import shutil
 
-class MitIrSurveyDataset(Dataset):
+class MITIRSurveyDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80,10,10], device='cuda', download=True):
         self.config = config
         self.root_dir = Path(os.path.expanduser(self.config['datasets_path']),'MIT_IR_Survey')
         self.type = type
 
+        if type == "train" and "MIT" not in config.train_rir_datasets:
+            print("WARNING: Loading MIT dataset for training, but MIT is not in the config's training rir datasets list. This may lead to unexpected results.")
+        elif type == "val" and "MIT" not in config.val_rir_datasets:
+            print("WARNING: Loading MIT dataset for validation, but MIT is not in the config's validation rir datasets list. This may lead to unexpected results.")
+        elif type == "test" and "MIT" not in config.test_rir_datasets:
+            print("WARNING: Loading MIT dataset for testing, but MIT is not in the config's testing rir datasets list. This may lead to unexpected results.")
+        
+        
         if download and not os.path.isdir(str(self.root_dir)): # If the path doesn't exist, download the dataset if set to true
             self.download_mit_ir_survey(self.root_dir)
 
         self.max_data_len = 270 # This is supposed to be 271 but there is an IR missing in the dataset
         self.samplerate = 32000
 
-        self.split_train_val_test_p = np.array(np.int16(split_train_val_test_p))
-        self.split_train_val_test = np.int16(np.round( np.array(self.split_train_val_test_p)/100 * self.max_data_len ))
-        self.split_edge = np.cumsum(np.concatenate(([0],self.split_train_val_test)), axis=0)
-        self.idx_rand = np.random.RandomState(seed=config['random_seed']).permutation(self.max_data_len)
 
-        split = []
-        if self.type == "train":
-            split = self.idx_rand[self.split_edge[0]:self.split_edge[1]]
-        elif self.type == "val":
-            split = self.idx_rand[self.split_edge[1]:self.split_edge[2]]
-        elif self.type == "test":
-            split = self.idx_rand[self.split_edge[2]:self.split_edge[3]]
-
+        if type == "train" and "MIT" not in config.val_rir_datasets and "MIT" not in config.test_rir_datasets:
+            # all idxs can be used for training, no need to split
+            split_idxs = list(range(self.max_data_len))
+        elif type == "val" and "MIT"  not in config.train_rir_datasets and "MIT"  not in config.test_rir_datasets:
+            # all idxs can be used for validation, no need to split
+            split_idxs = list(range(self.max_data_len))
+        elif type == "test" and "MIT"  not in config.train_rir_datasets and "MIT"  not in config.val_rir_datasets:
+            # all idxs can be used for testing, no need to split
+            split_idxs = list(range(self.max_data_len))
+        else:
+            self.split_train_val_test_p = np.array(np.int16(split_train_val_test_p))
+            self.split_train_val_test = np.int16(np.round( np.array(self.split_train_val_test_p)/100 * self.max_data_len ))
+            self.split_edge = np.cumsum(np.concatenate(([0],self.split_train_val_test)), axis=0)
+            self.idx_rand = np.random.RandomState(seed=config['random_seed']).permutation(self.max_data_len)
+            split_idxs = []
+            if self.type == "train":
+                split_idxs  = self.idx_rand[self.split_edge[0]:self.split_edge[1]]
+            elif self.type == "val":
+                split_idxs = self.idx_rand[self.split_edge[1]:self.split_edge[2]]
+            elif self.type == "test":
+                split_idxs  = self.idx_rand[self.split_edge[2]:self.split_edge[3]]
+        print(self.max_data_len, "total RIRs in MIT IR Survey dataset")
         files = glob.glob(str(Path(self.root_dir,"*")))
-        self.split_filenames = [files[i] for i in split]
-    
+        self.split_filenames = [files[i] for i in split_idxs]
+        print(len(self.split_filenames), "RIRs in split")
         # get excluded RIR filenames and remove them
         exclude_filenames = self.get_exclude_rirs()
 
@@ -69,7 +87,7 @@ class MitIrSurveyDataset(Dataset):
         audio_data, samplerate = sf.read(filename)
         if samplerate != self.samplerate:
             raise Exception("The samplerate of the audio in the dataset is not 32kHz.")
-        
+        filename = os.path.basename(filename)  # Get just the filename without the path for this part
         return audio_data, filename
 
     def download_mit_ir_survey(self, local_path):
@@ -98,5 +116,5 @@ class MitIrSurveyDataset(Dataset):
 
         return True
 
-def MitIrSurveyDataloader(config_path, type="train"):
-    return DataLoader(MitIrSurveyDataset(config_path, type=type))
+def MITIRSurveyDataloader(config_path, type="train"):
+    return DataLoader(MITIRSurveyDataset(config_path, type=type))

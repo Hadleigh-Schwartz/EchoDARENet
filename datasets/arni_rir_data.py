@@ -1,48 +1,46 @@
 """
-ACE-Challenge IR dataset loader.
+ARNI IR dataset loader.
 Code adapted from original EARS dataset code provided at https://github.com/sp-uhh/ears_benchmark/tree/main
 """
 
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import soundfile as sf
-import librosa
 import glob
 import os
+import librosa
 import sofa
 import mat73
 
 
-
-class ACEIRDataset(Dataset):
+class ARNIIRDataset(Dataset):
     def __init__(self, config, type="train", split_train_val_test_p=[80, 10, 10], device='cuda'):
         self.config = config
         self.root_dir = os.path.join(os.path.expanduser(self.config['datasets_path']), 'ears_rirs')
         self.type = type
         
-        if type == "train" and "ACE" not in config.train_rir_datasets:
-            print("WARNING: Loading ACE dataset for training, but ACE is not in the config's training rir datasets list. This may lead to unexpected results.")
-        elif type == "val" and "ACE" not in config.val_rir_datasets:
-            print("WARNING: Loading ACE dataset for validation, but ACE is not in the config's validation rir datasets list. This may lead to unexpected results.")
-        elif type == "test" and "ACE" not in config.test_rir_datasets:
-            print("WARNING: Loading ACE dataset for testing, but ACE is not in the config's testing rir datasets list. This may lead to unexpected results.")
+        if type == "train" and "ARNI" not in config.train_rir_datasets:
+            print("WARNING: Loading ARNI dataset for training, but ARNI is not in the config's training rir datasets list. This may lead to unexpected results.")
+        elif type == "val" and "ARNI" not in config.val_rir_datasets:
+            print("WARNING: Loading ARNI dataset for validation, but ARNI is not in the config's validation rir datasets list. This may lead to unexpected results.")
+        elif type == "test" and "ARNI" not in config.test_rir_datasets:
+            print("WARNING: Loading ARNI dataset for testing, but ARNI is not in the config's testing rir datasets list. This may lead to unexpected results.")
         
-        # ACE-Challenge dataset
-        all_filenames = []
-        dir = os.path.join(self.root_dir, "ACE-Challenge")
-        names = ["ACE_Corpus_RIRN_Chromebook/Chromebook", "ACE_Corpus_RIRN_Crucif/Crucif", "ACE_Corpus_RIRN_EM32/EM32", 
-                 "ACE_Corpus_RIRN_Lin8Ch/Lin8Ch", "ACE_Corpus_RIRN_Mobile/Mobile", "ACE_Corpus_RIRN_Single/Single"]
-        for name in names:
-            all_filenames += sorted(glob.glob(os.path.join(dir, name, "**", "*RIR.wav"), recursive=True))
+
+        dir = os.path.join(self.root_dir, "ARNI")
+        all_filenames  = sorted(glob.glob(os.path.join(dir, "**", "*.wav"), recursive=True))
+        # remove file numClosed_26-35/IR_numClosed_28_numComb_2743_mic_4_sweep_5.wav because it is corrupted
+        all_filenames  = [file for file in all_filenames  if "numClosed_26-35/IR_numClosed_28_numComb_2743_mic_4_sweep_5.wav" not in file]
+        all_filenames = sorted(list(np.random.choice(all_filenames , size=1000, replace=False))) # take 1000 of 132037 RIRs (EARS precedent)
 
         self.max_data_len = len(all_filenames)
-        if type == "train" and "ACE" not in config.val_rir_datasets and "ACE" not in config.test_rir_datasets:
+        if type == "train" and "ARNI" not in config.val_rir_datasets and "ARNI" not in config.test_rir_datasets:
             # all idxs can be used for training, no need to split
             split_idxs = list(range(self.max_data_len))
-        elif type == "val" and "ACE"  not in config.train_rir_datasets and "ACE"  not in config.test_rir_datasets:
+        elif type == "val" and "ARNI"  not in config.train_rir_datasets and "ARNI"  not in config.test_rir_datasets:
             # all idxs can be used for validation, no need to split
             split_idxs = list(range(self.max_data_len))
-        elif type == "test" and "ACE"  not in config.train_rir_datasets and "ACE"  not in config.val_rir_datasets:
+        elif type == "test" and "ARNI"  not in config.train_rir_datasets and "ARNI"  not in config.val_rir_datasets:
             # all idxs can be used for testing, no need to split
             split_idxs = list(range(self.max_data_len))
         else:
@@ -57,10 +55,10 @@ class ACEIRDataset(Dataset):
                 split_idxs = self.idx_rand[self.split_edge[1]:self.split_edge[2]]
             elif self.type == "test":
                 split_idxs  = self.idx_rand[self.split_edge[2]:self.split_edge[3]]
-        print(self.max_data_len, "total RIRs in ACE-Challenge dataset")
+        print(self.max_data_len, "total RIRs in ARNI dataset")
         self.split_filenames = [all_filenames[i] for i in split_idxs]
         print(len(self.split_filenames), "RIRs in split")
-        self.samplerate = 48000 # for EARS, have to upsample some 
+        self.samplerate = 44100
         exclude_filenames = self.get_exclude_rirs() # get excluded RIR filenames and remove them
         self.split_filenames = [f for f in self.split_filenames if f not in exclude_filenames]
         self.device = device
@@ -93,11 +91,11 @@ class ACEIRDataset(Dataset):
         return len(self.split_filenames)
 
     def __getitem__(self, idx):
-        filename = self.split_filenames[idx]
-        rir, sr = self.read_wav_file(filename)
-        filename = os.path.basename(filename)
+        path = self.split_filenames[idx]
+        rir, sr = self.read_wav_file(path)
+        filename = os.path.basename(path)
         return rir, filename
 
  
-def ACEIRDataloader(config_path, type="train"):
-    return DataLoader(ACEIRDataset(config_path, type=type))
+def ARNIIRDataloader(config_path, type="train"):
+    return DataLoader(ARNIIRDataset(config_path, type=type))

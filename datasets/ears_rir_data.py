@@ -1,4 +1,5 @@
 """
+EARS IR data loader. Not in use. Instead we have a separate loader for each EARS dataset (ACE, AIR, ARNI, BRUDEX, dEchorate, DetmoldSRIR, Palimpsest).
 Code adapted from original EARS dataset code provided at https://github.com/sp-uhh/ears_benchmark/tree/main
 """
 
@@ -119,7 +120,7 @@ class EARSIRDataset(Dataset):
             # Take random channel if file is multi-channel
             channel = np.random.randint(0, rir.shape[1])
             rir = rir[:,channel]
-            assert sr_rir == 44100, "What"
+            assert sr_rir == 44100, "SR should be 44100 for ARNI files"
             rir = librosa.resample(rir, orig_sr=sr_rir, target_sr=48000)
             sr_rir = 48000
         elif rir_file.endswith(".wav"):

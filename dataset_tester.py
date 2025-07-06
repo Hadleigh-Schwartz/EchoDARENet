@@ -8,8 +8,15 @@ from argparse import ArgumentParser
 from datasets.gtu_rir_data import GTUIRDataset
 from datasets.soundcam_rir_data import SoundCamIRDataset
 from datasets.ace_rir_data import ACEIRDataset
+from datasets.air_rir_data import AIRIRDataset
 from datasets.ears_speech_data import EARSSpeechDataset
 from datasets.ears_rir_data import EARSIRDataset
+from datasets.mit_rir_data import MITIRSurveyDataset
+from datasets.arni_rir_data import ARNIIRDataset
+from datasets.brudex_rir_data import BRUDEXIRDataset
+from datasets.dechorate_rir_data import dechorateIRDataset
+from datasets.detmold_rir_data import DetmoldIRDataset
+from datasets.palimpsest_rir_data import PalimpsestIRDataset
 
 import torch as t
 import matplotlib.pyplot as plt
@@ -33,6 +40,13 @@ def main(args):
     # dataset = SoundCamIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     # dataset = EARSIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     dataset = ACEIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = AIRIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = MITIRSurveyDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = ARNIIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = BRUDEXIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = dechorateIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = DetmoldIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
+    dataset = PalimpsestIRDataset(cfg, type="train", split_train_val_test_p=[80,10,10], device='cuda')
     # iterate over the dataset
     for i in range(len(dataset)):
         rir_data, file_id = dataset[i]
